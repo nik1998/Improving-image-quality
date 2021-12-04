@@ -5,8 +5,13 @@ from img_filters import *
 from mykeras_utils import *
 from noisy import *
 from scipy.stats import truncnorm, norm
+import canny_edge_detector as canny
+from skimage.filters import hessian
+from skimage.feature import hessian_matrix, hessian_matrix_eigvals
 import keras
 import cv2
+from regression import *
+from tqdm import tqdm
 
 
 def test_filters():
@@ -144,11 +149,11 @@ def adaptive():
 
 
 def global_test():
-    recursive_read_operate_save('/home/nik/images/', '/home/nik/test_images/',
+    recursive_read_operate_save('/home/nik/images/', '/home/nik/test_square_filter2/',
                                 operate_binarization)
 
 
-if __name__ == '__main__':
+def morph_repair():
     fn = 'improve/4.103 check_0477.jpg'
     img = read_image(fn)
     img = img[-150:-22, -150:-202]
@@ -159,3 +164,96 @@ if __name__ == '__main__':
     cv2.imwrite("improve_results/morphfinal.png", 255 * np.concatenate((img, res), axis=1))
     cv2.imwrite("improve_results/morphfinal2.png",
                 255 * np.concatenate((operate_binarization(img), operate_binarization(res)), axis=1))
+
+
+def adaptive1():
+    fn = 'train_images/img302.png'
+    img = read_image(fn, 128, 128)
+    showImage(img)
+    # img = unsharp_masking(img, 3)
+    img = adaptive_median(img, threshold=1.0)
+    showImage(img)
+    ans = adaptive_binarization_bredly(img)
+    # ans = adaptive_binarization_otcy(img)
+    showImage(ans)
+    ans = square_bin_filter(ans, dsize=6, min_square=20)
+    showImage(ans)
+
+
+def experiments():
+    fn = 'train_images/img302.png'
+    img = read_image(fn, 128, 128)
+    showImage(img)
+    # img = unsharp_masking(img, 3)
+    img = adaptive_median(img, threshold=1.0)
+    # showImage(img)
+    # ans = operate_binarization(img)
+    # showImage(ans)
+    ans = square_bin_filter(img, dsize=6, min_square=15)
+    showImage(ans)
+
+
+# https://newbedev.com/how-to-use-ridge-detection-filter-in-opencv
+def detect_ridges(gray, sigma=1.0):
+    H_elems = hessian_matrix(gray, sigma=sigma, order='rc')
+    maxima_ridges, minima_ridges = hessian_matrix_eigvals(H_elems)
+    return maxima_ridges, minima_ridges
+
+
+def plot_images(*images):
+    images = list(images)
+    n = len(images)
+    fig, ax = plt.subplots(ncols=n, sharey=True)
+    for i, img in enumerate(images):
+        ax[i].imshow(img, cmap='gray')
+        ax[i].axis('off')
+    plt.subplots_adjust(left=0.03, bottom=0.03, right=0.97, top=0.97)
+    plt.show()
+
+
+def canny_with_morph():
+    fn = 'train_images/img302.png'
+    img = read_image(fn, 128, 128)
+    showImage(img)
+    ans = canny.detect(img * 255)
+    se = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    ans = cv2.morphologyEx(ans / 255, cv2.MORPH_CLOSE, se)
+    showImage(ans)
+    # ans = hessian(255*img, mode='constant')
+    # showImage(ans / 255)
+    a, b = detect_ridges(img, sigma=3.0)
+    plot_images(img, a, b)
+
+
+def ridge_detector_test():
+    fn = 'train_images/img302.png'
+    img = read_image(fn, 128, 128)
+    # img = adaptive_median(img, threshold=1.0)
+    showImage(img)
+    ans = ridge_detector(img)
+    showImage(ans)
+
+
+def image_complex_bin(img):
+    ans = (operate_binarization(img, False) + operate_square_filter(img, False))
+    cnt = 0
+    su = 0
+    for i in range(128):
+        for j in range(128):
+            if 1 > ans[i][j] > 0:
+                cnt += 1
+                su += ans[i][j]
+    if cnt == 0:
+        cnt += 1
+    ans = (ans > su / cnt).astype(np.float)
+    se = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    ans = cv2.morphologyEx(ans, cv2.MORPH_OPEN, se)
+    return ans
+
+
+if __name__ == '__main__':
+    # img = read_dir('train_images2/', 128, 128)
+    # for i in tqdm(range(len(img))):
+    # img[i] = image_complex_bin(img[i])
+    # save_images(img, 'cycle_bin/')
+    recursive_read_operate_save('train_images2/', 'cycle_bin/', image_complex_bin, False)

@@ -3,7 +3,6 @@ from datetime import timedelta
 import keras
 from tensorflow.keras.utils import Sequence
 from keras.preprocessing.image import ImageDataGenerator
-from numba import njit, float32, float64, int64
 from img_filters import *
 from noisy import *
 

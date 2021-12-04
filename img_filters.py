@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import cv2
 from matplotlib import pyplot as plt
@@ -69,14 +71,14 @@ def Sobel(image):
     return image
 
 
-def Sobel_x(image):
-    kx = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
+def sobel_x(image):
+    kx = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], np.float32)
     image = cv2.filter2D(image, -1, kx)
     return image
 
 
-def Sobel_y(image):
-    ky = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]])
+def sobel_y(image):
+    ky = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], np.float32)
     image = cv2.filter2D(image, -1, ky)
     return image
 
@@ -111,7 +113,8 @@ def histogram_equalization(image):
     return img2.astype(np.float) / 255
 
 
-def adaptive_hist(image, clipLimit=40):
+# https://www.pyimagesearch.com/2021/02/01/opencv-histogram-equalization-and-adaptive-histogram-equalization-clahe/
+def adaptive_hist(image, clipLimit=5):
     img = (image * 255).astype(np.uint8)
     clahe = cv2.createCLAHE(clipLimit=clipLimit, tileGridSize=(8, 8))
     cl1 = clahe.apply(img)
@@ -148,61 +151,6 @@ def gamma_correction(image, gamma=0.8):
     res = np.clip(res, 0.0, 1.0)
     showImage(res)
     return res
-
-
-# http://amroamroamro.github.io/mexopencv/matlab/cv.PSNR.html
-# https://cvnote.ddlee.cc/2019/09/12/psnr-ssim-python
-def psnr(img1, img2):
-    h1, w1 = img1.shape
-    h2, w2 = img2.shape
-    hm = min(h1, h2)
-    wm = min(w1, w2)
-    psnr = cv2.PSNR(img1[:hm, :wm], img2[:hm, :wm], 1)
-    return psnr
-
-
-# https://cvnote.ddlee.cc/2019/09/12/psnr-ssim-python
-def similarity(img1, img2, show=False):
-    h1, w1 = img1.shape
-    h2, w2 = img2.shape
-    hm = min(h1, h2)
-    wm = min(w1, w2)
-    (score, diff) = structural_similarity(img1[:hm, :wm], img2[:hm, :wm], full=True)
-    if show:
-        showImage(diff)
-    return score
-
-
-# https://cyberleninka.ru/article/n/mera-otsenki-rezkosti-tsifrovogo-izobrazheniya/viewer
-def sharpness_measure(img):
-    k = np.max(img) / 2
-    n = img.shape[0]
-    m = img.shape[1]
-    d = (n - 1) * (m - 1)
-    res = 0.0
-    for i in range(1, n):
-        for j in range(1, m):
-            r = abs(img[i, j] - img[i, j - 1]) + abs(img[i, j] - img[i - 1, j])
-            res += r * r
-    return res / d / k
-
-
-def contrast_measure(img):
-    return img.std()
-
-
-def compare_images_by_function(a, p, f, double=False):
-    va = 0.0
-    vp = 0.0
-    for i, image in enumerate(a):
-        if double:
-            d = abs(f(image, p[i]))
-            va += d
-            vp += d
-        else:
-            va += f(image)
-            vp += f(p[i])
-    return va / len(a), vp / len(p)
 
 
 def total_masking(image, sigma1=2.0, sigma2=2.0):
@@ -252,8 +200,112 @@ def adaptive_median(image, window=3, threshold=0):
     return image_array
 
 
-def operate_binarization(img):
+def operate_binarization(img, concat=True):
     img2 = img.copy()
     img2 = cv2.GaussianBlur(img2, (0, 0), 1)
     img2 = img2 > np.mean(img2)
-    return np.concatenate((img, img2), axis=1)
+    if concat:
+        return np.concatenate((img, img2), axis=1)
+    else:
+        return img2
+
+
+def operate_square_filter(img, concat=True):
+    img2 = cv2.GaussianBlur(img, (0, 0), 1)
+    img2 = square_bin_filter(img2, dsize=6, min_square=15)
+    if concat:
+        return np.concatenate((img, img2), axis=1)
+    else:
+        return img2
+
+
+# https://habr.com/ru/post/278435/
+def adaptive_binarization_bredly(img, sensitivity=0):
+    h, w = img.shape
+    integ = integrity_image(img)
+    d = h // 16
+    ans = np.zeros((h, w), dtype=np.float)
+    for i in range(0, h):
+        for j in range(0, w):
+            x1 = i - d
+            x2 = i + d
+            y1 = j - d
+            y2 = j + d
+            if x1 < 0:
+                x1 = 0
+            if x2 > h:
+                x2 = h
+            if y1 < 0:
+                y1 = 0
+            if y2 > w:
+                y2 = w
+            c = (y2 - y1) * (x2 - x1)
+            su = integ[x2, y2] - integ[x1, y2] - integ[x2, y1] + integ[x1, y1]
+            if su * (1 - sensitivity) < img[i, j] * c:
+                ans[i, j] = 1.0
+    return ans
+
+
+def integrity_image(img):
+    h, w = img.shape
+    integ = np.zeros((h + 1, w + 1), dtype=np.float)
+    for i in range(1, h + 1):
+        for j in range(1, w + 1):
+            integ[i, j] = integ[i, j - 1] + integ[i - 1, j] - integ[i - 1, j - 1] + img[i - 1, j - 1]
+    return integ
+
+
+def square_bin_filter(img, dsize=6, min_square=20):
+    ans = img.copy()
+    d = dsize // 2
+    h, w = img.shape
+    integ = integrity_image(img)
+    for i in range(0, h):
+        for j in range(0, w):
+            x1 = i - d
+            x2 = i + d
+            y1 = j - d
+            y2 = j + d
+            if x1 < 0:
+                x1 = 0
+            if x2 > h:
+                x2 = h
+            if y1 < 0:
+                y1 = 0
+            if y2 > w:
+                y2 = w
+            c = (y2 - y1) * (x2 - x1)
+            c = min_square * c / dsize / dsize
+            su = integ[x2, y2] - integ[x1, y2] - integ[x2, y1] + integ[x1, y1]
+            if su < c:
+                ans[i, j] = 0.0
+    return ans
+
+
+def otcy_threshold(img):
+    hist, _ = np.histogram(img.ravel(), 256, range=[0, 1])
+    cdf = hist.cumsum()
+    max_sigma = 0
+    max_t = 0
+    h, w = img.shape
+    n = h * w
+    su = np.sum(img)
+    cursu = 0
+    # determine threshold
+    for t in range(1, 255):
+        cursu += t / 255 * hist[t]
+        m0 = cursu / cdf[t] if cdf[t] > 0 else 0
+        w0 = cdf[t] / (h * w)
+        m1 = (su - cursu) / (n - cdf[t]) if cdf[t] < n else 0
+        w1 = 1 - cdf[t] / (h * w)
+        sigma = w0 * w1 * ((m0 - m1) ** 2)
+        if sigma > max_sigma:
+            max_sigma = sigma
+            max_t = t
+    return max_t / 255
+
+
+# https://habr.com/ru/post/112079/
+def adaptive_binar230ization_otcy(img):
+    max_t = otcy_threshold(img)
+    return img > max_t

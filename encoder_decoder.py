@@ -67,7 +67,7 @@ def pixel_distance(real_images, generated_images):
 
 if __name__ == '__main__':
     # data_img = read_dir("all_images", height, width, True)
-    # data_img = recursive_read_split("want_to_split/", height, False, 0.5)
+    #data_img = recursive_read_split("different_images_sem/", height, False, 0.5)
     # noise_generator = np.random.normal(0, 1, data_img.shape)
     # noisy_data = data_img + noise_factor * noise_generator
     # noisy_data = np.expand_dims(noisy_data, axis=-1)
@@ -94,7 +94,7 @@ if __name__ == '__main__':
     gen_model.add(
         Conv2D(1, kernel_size=(3, 3), kernel_constraint=max_norm(max_norm_value), activation='sigmoid', padding='same'))
     gen_model.summary()
-    plot_model(gen_model, "enc_dec.png")
+    #plot_model(gen_model, "enc_dec.png")
     acc = pixel_distance
     acc.__name__ = 'acc'
     gen_model.compile(optimizer='adam', loss='binary_crossentropy', metrics=[acc])

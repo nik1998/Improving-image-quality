@@ -1,6 +1,7 @@
 import os
 import random
 import string
+import sys
 import time
 
 import cv2
@@ -109,12 +110,12 @@ def save_images(images, path, stdNorm=False, imageNames=None):
     for i in range(images.shape[0]):
         img = images[i]
         if stdNorm:
-            img = img * 127 + 127
+            img = img * 127.5 + 127.5
         else:
             img = img * 255
         # print(np.mean(img))
         if imageNames is None:
-            cv2.imwrite(path + "img" + str(inn) + ".png", img)
+            cv2.imwrite(os.path.join(path, "img" + str(inn) + ".png"), img)
             inn += 1
         else:
             cv2.imwrite(os.path.join(path, imageNames[i]), img)
@@ -152,20 +153,20 @@ def debug_get_activations(model, test_image):
         plt.imshow(display_grid, aspect='auto', cmap='viridis')
 
 
-def read_image(imageName: string, width=0, height=0):
+def read_image(imageName: string, height=0, width=0):
     im = cv2.imread(imageName, cv2.IMREAD_GRAYSCALE)
     if width != 0 and height != 0:
         im = cv2.resize(im, (height, width))
     return np.asarray(im, dtype=np.float32) / 255
 
 
-def read_dir(imagePath, width, height, sort=False):
+def read_dir(imagePath, height, width, sort=False):
     dir = os.listdir(imagePath)
     if sort:
         dir = sorted(dir)
     dir_images = []
     for l in dir:
-        dir_images.append(read_image(os.path.join(imagePath, l), width, height))
+        dir_images.append(read_image(os.path.join(imagePath, l), height, width))
     return np.asarray(dir_images)
 
 
@@ -255,17 +256,19 @@ def unionImage(images, h, w):
 def read_operate_save(image_path, save_path, operate):
     img = read_image(image_path)
     print(image_path)
+    sys.stdout.flush()
     img = operate(img)
     cv2.imwrite(save_path, img * 255)
 
 
-def recursive_read_operate_save(image_path, save_path, operate):
+def recursive_read_operate_save(image_path, save_path, operate, timeout=True):
     for dr in os.listdir(image_path):
         abs_path = os.path.join(image_path, dr)
         if os.path.isdir(abs_path):
             recursive_read_operate_save(abs_path, save_path, operate)
-        elif 'jpg' == dr[-3:] or 'bmp' == dr[-3:]:
+        elif 'jpg' == dr[-3:] or 'bmp' == dr[-3:] or 'png' == dr[-3:]:
             s = os.path.join(save_path, dr)
             x = threading.Thread(target=read_operate_save, args=(abs_path, s, operate))
             x.start()
-    time.sleep(1)
+    if timeout:
+        time.sleep(1)

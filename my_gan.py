@@ -21,7 +21,6 @@ width = 128
 height = 128
 channels = 1
 # important articles:
-# https://www.machinelearningmastery.ru/style-transfer-with-gans-on-hd-images-88e8efcf3716/
 # https://towardsdatascience.com/style-transfer-with-gans-on-hd-images-88e8efcf3716
 class AdvLoss(keras.layers.Layer):
     def __init__(self, **kwargs):
