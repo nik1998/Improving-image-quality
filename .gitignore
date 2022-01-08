@@ -9,6 +9,10 @@ experimental/
 datasets/
 results/
 
+
+#Idea
+.idea/
+
 # C extensions
 *.so
 
