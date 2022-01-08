@@ -1,57 +1,33 @@
 import os
 import random
+import shutil
 import string
 import sys
+import threading
 import time
 
 import cv2
-import numpy as np
 import matplotlib.pyplot as plt
-from keras import models
+import numpy as np
 from sklearn.utils import shuffle
-import threading
 
 
-def cross_validation(data, targets, k=4):
-    num_validation_samples = len(data) // k
-    data, targets = shuffle(data, targets)
-    for fold in range(k):
-        validation_data = data[num_validation_samples * fold:num_validation_samples * (fold + 1)]
-        training_data = np.concatenate(
-            [data[:num_validation_samples * fold], data[num_validation_samples * (fold + 1):]], axis=0)
-        validation_targets = targets[num_validation_samples * fold:num_validation_samples * (fold + 1)]
-        training_targets = np.concatenate(
-            [targets[:num_validation_samples * fold], targets[num_validation_samples * (fold + 1):]], axis=0)
-        yield training_data, training_targets, validation_data, validation_targets
+def wrap(img, add_channels=False):
+    if add_channels:
+        img = np.expand_dims(img, axis=-1)
+    return np.asarray([img])
 
 
 def plot_graphs(history):
-    loss = history['loss']
-    val_loss = history['val_loss']
-    epochs = range(1, len(loss) + 1)
-    plt.plot(epochs, loss, 'bo', label='Training loss')
-    plt.plot(epochs, val_loss, 'b', label='Validation loss')
-    plt.title('Training and validation loss')
-    plt.xlabel('Epochs')
-    plt.ylabel('Loss')
-    plt.legend()
-
-    plt.figure()
-    acc = history['acc']
-    val_acc = history['val_acc']
-    plt.plot(epochs, acc, 'bo', label='Training acc')
-    plt.plot(epochs, val_acc, 'b', label='Validation acc')
-    plt.title('Training and validation accuracy')
-    plt.xlabel('Epochs')
-    plt.ylabel('Accuracy')
-    plt.legend()
+    for key in history:
+        plt.figure()
+        loss = history[key]
+        epochs = range(1, len(loss) + 1)
+        plt.plot(epochs, loss)
+        plt.title(key)
+        plt.xlabel('Epochs')
+        plt.ylabel(key)
     plt.show()
-
-
-def my_augmented_function(image):
-    i = random.randint(0, 4)
-    im = np.rot90(image, k=i)
-    return im
 
 
 def split_image(image, x):
@@ -71,9 +47,9 @@ def recursive_read_split(image_path, x, inmemory=True, drop=0.5):
 def prepare_dataset(image_path, x, inmemory=False, drop=0.5):
     print(image_path)
     new_dataset = []
-    train_path = 'train_images2/'
-    val_path = 'val_images2/'
-    test_path = 'test_images2/'
+    train_path = '../datasets/train_images/'
+    val_path = 'val_images/'
+    test_path = '../datasets/test_images/'
     for dr in os.listdir(image_path):
         abs_path = os.path.join(image_path, dr)
         if os.path.isdir(abs_path):
@@ -107,7 +83,7 @@ def save_images(images, path, stdNorm=False, imageNames=None):
     global inn
     if not os.path.exists(path):
         os.makedirs(path)
-    for i in range(images.shape[0]):
+    for i in range(len(images)):
         img = images[i]
         if stdNorm:
             img = img * 127.5 + 127.5
@@ -121,40 +97,11 @@ def save_images(images, path, stdNorm=False, imageNames=None):
             cv2.imwrite(os.path.join(path, imageNames[i]), img)
 
 
-def debug_get_activations(model, test_image):
-    layer_outputs = [layer.output for layer in model.layers]
-    activation_model = models.Model(inputs=model.input, outputs=layer_outputs)
-    img_tensor = np.expand_dims(test_image, axis=0)
-    activations = activation_model.predict(img_tensor)
-
-    layer_names = []
-    for layer in model.layers:
-        layer_names.append(layer.name)
-    images_per_row = 16
-    for layer_name, layer_activation in zip(layer_names, activations):
-        n_features = layer_activation.shape[-1]
-        size = layer_activation.shape[1]
-        n_cols = n_features // images_per_row
-        display_grid = np.zeros((size * n_cols, images_per_row * size))
-        for col in range(n_cols):
-            for row in range(images_per_row):
-                channel_image = layer_activation[0, :, :, col * images_per_row + row]
-                channel_image -= channel_image.mean()
-                channel_image /= channel_image.std()
-                channel_image *= 64
-                channel_image += 128
-                channel_image = np.clip(channel_image, 0, 255).astype('uint8')
-                display_grid[col * size: (col + 1) * size, row * size: (row + 1) * size] = channel_image
-        scale = 1. / size
-        plt.figure(figsize=(scale * display_grid.shape[1],
-                            scale * display_grid.shape[0]))
-        plt.title(layer_name)
-        plt.grid(False)
-        plt.imshow(display_grid, aspect='auto', cmap='viridis')
-
-
-def read_image(imageName: string, height=0, width=0):
-    im = cv2.imread(imageName, cv2.IMREAD_GRAYSCALE)
+def read_image(imageName: string, height=0, width=0, gray=True):
+    if gray:
+        im = cv2.imread(imageName, cv2.IMREAD_GRAYSCALE)
+    else:
+        im = cv2.imread(imageName)
     if width != 0 and height != 0:
         im = cv2.resize(im, (height, width))
     return np.asarray(im, dtype=np.float32) / 255
@@ -268,7 +215,40 @@ def recursive_read_operate_save(image_path, save_path, operate, timeout=True):
             recursive_read_operate_save(abs_path, save_path, operate)
         elif 'jpg' == dr[-3:] or 'bmp' == dr[-3:] or 'png' == dr[-3:]:
             s = os.path.join(save_path, dr)
+            # read_operate_save(abs_path, s, operate)
             x = threading.Thread(target=read_operate_save, args=(abs_path, s, operate))
             x.start()
     if timeout:
         time.sleep(1)
+
+
+def copy_from_labels(labels_path, source_path, dst_path):
+    dir = os.listdir(labels_path)
+    for name in dir:
+        cut_name = name.split("/")[-1]
+        src_img = os.path.join(source_path, cut_name)
+        dst_img = os.path.join(dst_path, cut_name)
+        shutil.copyfile(src_img, dst_img)
+
+
+def check_model(model, post_func):
+    def f(img):
+        im2 = np.reshape(img, (1,) + img.shape + (1,))
+        pred = model.predict(im2, batch_size=1)
+        p = post_func(pred[0])
+        p = np.reshape(p, p.shape[:-1])
+        return np.concatenate([img, p])
+
+    return f
+
+
+def simple_boundary(img):
+    return np.around(img)
+
+
+def check_not_interception(arr1, arr2):
+    s = set(arr1)
+    for e in arr2:
+        if e in s:
+            return False
+    return True

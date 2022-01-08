@@ -1,17 +1,9 @@
-import os
-
-from mylibrary import *
-from img_filters import *
-from mykeras_utils import *
-from noisy import *
-from scipy.stats import truncnorm, norm
-import canny_edge_detector as canny
-from skimage.filters import hessian
+from scipy.stats import norm
 from skimage.feature import hessian_matrix, hessian_matrix_eigvals
-import keras
-import cv2
-from regression import *
-from tqdm import tqdm
+
+from utils import canny_edge_detector as canny
+from utils.regression import *
+from neural_networks.unet import *
 
 
 def test_filters():
@@ -42,10 +34,10 @@ def noisy_test():
     test_img = read_dir("Simple_dataset/Good", height, width, True)
     for i in range(len(test_img)):
         showImage(test_img[i])
-        showImage(noisy(test_img[i], "gauss"))
-        showImage(noisy(test_img[i], "s&p"))
-        showImage(noisy(test_img[i], "big_defect"))
-        showImage(noisy(test_img[i], "light_side"))
+        showImage(noisy_with_defaults(test_img[i], "gauss"))
+        showImage(noisy_with_defaults(test_img[i], "s&p"))
+        showImage(noisy_with_defaults(test_img[i], "big_defect"))
+        showImage(noisy_with_defaults(test_img[i], "light_side"))
         showImage(test_img[i])
     save_images(test_img, "noisy_dataset/", stdNorm=False)
 
@@ -110,7 +102,7 @@ def light():
 
 def collision():
     # recursive_read_split("semiconductor/", 128, False, 0.5)
-    fn = 'train_images2/img13.png'
+    fn = 'train_images/img13.png'
     img = read_image(fn, 128, 128)
     src = img.copy()
     showImage(img)
@@ -226,12 +218,13 @@ def canny_with_morph():
 
 
 def ridge_detector_test():
-    fn = 'train_images/img302.png'
+    fn = 'one_layer_images/train_images/img302.png'
     img = read_image(fn, 128, 128)
     # img = adaptive_median(img, threshold=1.0)
     showImage(img)
     ans = ridge_detector(img)
     showImage(ans)
+    cv2.imwrite("ridgedetector.png", ans * 255)
 
 
 def image_complex_bin(img):
@@ -252,8 +245,31 @@ def image_complex_bin(img):
 
 
 if __name__ == '__main__':
-    # img = read_dir('train_images2/', 128, 128)
+    # img = read_dir('train_images/', 128, 128)
     # for i in tqdm(range(len(img))):
     # img[i] = image_complex_bin(img[i])
-    # save_images(img, 'cycle_bin/')
-    recursive_read_operate_save('train_images2/', 'cycle_bin/', image_complex_bin, False)
+    # save_images(img, 'all_bin_images/')
+    # recursive_read_operate_save('train_images/', 'all_bin_images/', image_complex_bin, False)
+    # copy_from_labels("unet/bin_images", "train_images", "unet/real_images")
+    # image_path = "unet/images"
+    # aug = AugmentationUtils()\
+    #     .rescale()\
+    #     .add_median_blur() \
+    #     .add_gaussian_blur() \
+    #     .reflect_rotation()\
+    #     .add_gauss_noise()\
+    #     .add_big_light_hole()\
+    # # aug = AugmentationUtils()
+    # gen = aug.create_generator()
+    # generator = gen.flow_from_directory(image_path, color_mode='grayscale', batch_size=16)
+    # images = None
+    # for im1, _ in generator:
+    #     if images is None:
+    #         images = im1
+    #     else:
+    #         images = np.vstack([images, im1])
+    #     if len(images) > 2000:
+    #         break
+    # save_images(images, "aug_test/")
+    ridge_detector_test()
+    data_img = recursive_read_split("different_images_sem/", 128, False, 0.5)

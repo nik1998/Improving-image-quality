@@ -1,25 +1,19 @@
-import os
-
+import keras.backend as K
 import tqdm
 from keras import layers
-import keras
-import keras.backend as K
-import tensorflow as tf
-from keras.preprocessing.image import ImageDataGenerator
-import numpy as np
-from matplotlib import pyplot as plt
-from pylab import rcParams
-from sklearn.model_selection import train_test_split
-from PIL import Image, ImageOps
-from mylibrary import *
-from mykeras_utils import *
-# # Models
-physical_devices = tf.config.list_physical_devices('GPU')
-tf.config.experimental.set_memory_growth(physical_devices[0], True)
+
+from utils.mykeras_utils import *
+
+# physical_devices = tf.config.list_physical_devices('GPU')
+# tf.config.experimental.set_memory_growth(physical_devices[0], True)
+
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 width = 128
 height = 128
 channels = 1
+
+
 # important articles:
 # https://towardsdatascience.com/style-transfer-with-gans-on-hd-images-88e8efcf3716
 class AdvLoss(keras.layers.Layer):
@@ -122,7 +116,7 @@ adv_loss = AdvLoss(name='adv_loss')([input_layer, gan])
 cnt_loss = CntLoss(name='cnt_loss')([input_layer, gan])
 enc_loss = EncLoss(name='enc_loss')([input_layer, gan])
 
-gan_trainer = keras.models.Model(input_layer, [adv_loss, cnt_loss, enc_loss])
+gan_trainer = keras.models.Model(input_layer, [adv_loss, cnt_loss, enc_loss], name="gan_trainer")
 
 
 # loss function
@@ -150,65 +144,44 @@ f = feature_extractor(input_layer)
 d = layers.GlobalAveragePooling2D(name='glb_avg')(f)
 d = layers.Dense(1, activation='sigmoid', name='d_out')(d)
 
-d = keras.models.Model(input_layer, d)
+d = keras.models.Model(input_layer, d, name="discriminator")
 d.summary()
 # keras.utils.plot_model(d, to_file="dis.png")
 d.compile(optimizer='adam', loss='binary_crossentropy', metrics='accuracy')
 
-
-def load_data(train_dir="Simple_dataset/Good", test_dir="Simple_dataset/Bad", stat=False):
-    train_images = read_dir(train_dir, height, width)
-    test_images = read_dir(test_dir, height, width)
-    if stat:
-        brightNowm(train_images)
-        brightNowm(test_images)
-        # plotHist(all_images)
-    train_images = std_norm_x(train_images)
-    test_images = std_norm_x(test_images)
-    train_images = np.expand_dims(train_images, axis=-1)
-    test_images = np.expand_dims(test_images, axis=-1)
-    # save_images(all_images, "norm-images/")
-    return train_images, test_images
-
-
 if __name__ == '__main__':
     bz = 16
-    # x_train, x_test = load_data("real/train_images", "test_images/", stat=False)
-    x_train, x_test = load_data("Simple_dataset/Good", "Simple_dataset/Bad", stat=False)
-    train_datagen = ImageDataGenerator(horizontal_flip=True, vertical_flip=True, brightness_range=[0.5, 1.5],
-                                       zoom_range=[0.8, 1.2], rescale=1 / 255.0,
-                                       preprocessing_function=my_augmented_function)
+    seed = random.randint(0, 2 ** 30)
+    aug = AugmentationUtils().rescale().zoom_range().horizontal_flip().vertical_flip().brightness_range() \
+        .std_norm_after_rescale()
+    x_train = aug.create_generator("../datasets/real/train/", batch_size=bz,
+                                   target_size=(height, width), seed=seed)
+    x_test = aug.create_generator("../datasets/real/val/", batch_size=bz,
+                                  target_size=(height, width))
+    x_test = get_gen_images(x_test)
 
-    # datagen.fit(x_train)
+    aug = AugmentationUtils().rescale().zoom_range().horizontal_flip().vertical_flip().brightness_range() \
+        .add_gauss_noise(var=0.05) \
+        .std_norm_after_rescale()
+    noise_gen = aug.create_generator("../datasets/real/train/",
+                                     batch_size=bz,
+                                     target_size=(height, width), seed=seed)
+    training_generator = UnionGenerator([x_train, noise_gen], batch_size=bz).reflect_rotate()
 
-    train_xgenerator = train_datagen.flow_from_directory('real/', target_size=(height, width),
-                                                         batch_size=bz, color_mode='grayscale')
-    #train_data_generator = train_datagen.flow(x=x_train, save_to_dir="aug_dataset2/", save_prefix='aug',
-    #save_format='png', batch_size=bz)
-    #save_generator_result(train_data_generator)
-    # train_data_generator = train_datagen.flow(x=x_train, y=y_train, batch_size=bz)
+    test_generator("../results/test/", training_generator, stdNorm=True)
+    # train_data_generator = train_datagen.flow(x=x_train, save_to_dir="aug_dataset2/", save_prefix='aug',
+    # save_format='png', batch_size=bz)
     minsu = 10000
     niter = 10000
     for i in tqdm.tqdm(range(niter)):
         ### get batch x, y ###
-        x, _ = train_xgenerator.__next__()
-        y = []
-        for j, im in enumerate(x):
-            cur = random.randint(0, 1)
-            if cur == 0:
-                x[j] = apply_noise(std_norm_x(im), True)
-            y.append(cur)
-        # save_images(x, "tr_images/")
+        x, y = training_generator.next()
         ### train disciminator ###
         d.trainable = True
         gan_trainer.trainable = False
-        fake_x = g.predict(x)
+        fake_x = g.predict(y)
         d_x = np.concatenate([x, fake_x], axis=0)
-        d_y = np.concatenate([y, np.zeros(len(fake_x))], axis=0)
-        np.random.seed(i)
-        np.random.shuffle(d_x)
-        np.random.seed(i)
-        np.random.shuffle(d_y)
+        d_y = np.concatenate([np.ones(len(fake_x)), np.zeros(len(fake_x))], axis=0)
         d_loss = d.train_on_batch(d_x, d_y)
         ### train generator ###
         d.trainable = False
@@ -221,18 +194,16 @@ if __name__ == '__main__':
             if su < minsu:
                 minsu = su
                 print("save best")
-                g_e.save_weights("g_e.h5")
-                g.save_weights("g.h5")
-                d.save_weights("d.h5")
-                g_e.save('models/gan/generator_encoder.h5')
-                g.save('models/gan/generator.h5')
-                d.save('models/gan/discriminator.h5')
+                g_e.save_weights("../models/my_gan/g_e.h5")
+                g.save_weights("../models/my_gan/g.h5")
+                d.save_weights("../models/my_gan/d.h5")
+                g_e.save('../models/my_gan/generator_encoder.h5')
+                g.save('../models/my_gan/generator.h5')
+                d.save('../models/my_gan/discriminator.h5')
                 print("Validation: " + str(d.evaluate(x_test, np.ones(len(x_test)))))
-                print("Predict test:" + str(d.predict(x_test).flatten()))
-                print("Predict train:" + str(d.predict(x_train).flatten()))
-    g_e.load_weights("g_e.h5")
-    g.load_weights("g.h5")
-    d.load_weights("d.h5")
+    g_e.load_weights("../models/my_gan/g_e.h5")
+    g.load_weights("../models/my_gan/g.h5")
+    d.load_weights("../models/my_gan/d.h5")
     # # Evaluation
     encoded = g_e.predict(x_test)
     gan_x = g.predict(x_test)
@@ -249,9 +220,10 @@ if __name__ == '__main__':
 
     gan_x = np.reshape(gan_x, gan_x.shape[:-1])
     x_test = np.reshape(x_test, x_test.shape[:-1])
-    unionTestImages(x_test, gan_x, 1, 1, "images_test_union/", True)
+    unionTestImages(x_test, gan_x, 1, 1, "../results/images_test_union/", True)
 
+    x_train = get_gen_images(x_train)
     gan_x = g.predict(x_train)
     gan_x = np.reshape(gan_x, gan_x.shape[:-1])
     x_train = np.reshape(x_train, x_train.shape[:-1])
-    unionTestImages(x_train, gan_x, 1, 1, "images_train_union/", True)
+    unionTestImages(x_train, gan_x, 1, 1, "../results/images_train_union/", True)

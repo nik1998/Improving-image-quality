@@ -3,7 +3,7 @@ import math
 import numpy as np
 import cv2
 from matplotlib import pyplot as plt
-from mylibrary import *
+from utils.mylibrary import *
 from skimage.metrics import structural_similarity
 from skimage import measure
 
@@ -20,7 +20,8 @@ def own_filter(image):
 def unsharp_masking(image, sigma=2.0):
     # np.zeros(image.shape, dtype="float32")
     # smooth = cv2.GaussianBlur(image, (0, 0), 2)
-    gaussian_3 = cv2.GaussianBlur(image, (0, 0), sigma)
+    gaussian_3 = np.zeros_like(image)
+    gaussian_3 = cv2.GaussianBlur(image, (0, 0), sigma, gaussian_3)
     return cv2.addWeighted(image, 1.5, gaussian_3, -0.5, 0)
     # return unsharp_image
 
@@ -41,7 +42,6 @@ Lastly, apply closing(dilation then erosion) on the image to close all the small
 
 
 def custom_algorithm(img, sobel=False):
-    showImage(img)
     # image = adaptive_hist(img, 10)
     image = cv2.GaussianBlur(img, (0, 0), 5.0)
     showImage(image)
@@ -306,6 +306,13 @@ def otcy_threshold(img):
 
 
 # https://habr.com/ru/post/112079/
-def adaptive_binar230ization_otcy(img):
+def adaptive_binarization_otcy(img):
     max_t = otcy_threshold(img)
     return img > max_t
+
+
+def reflect_rotate(image, rot=-1):
+    if rot == -1:
+        rot = random.randint(0, 4)
+    im = np.rot90(image, k=rot)
+    return im

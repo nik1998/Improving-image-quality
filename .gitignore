@@ -3,6 +3,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Ignore folders
+models/
+experimental/
+datasets/
+results/
+
 # C extensions
 *.so
 
@@ -127,3 +133,4 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+/arbitary_style/

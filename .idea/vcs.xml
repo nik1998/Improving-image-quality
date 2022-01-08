@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="VcsDirectoryMappings">
+    <mapping directory="$PROJECT_DIR$" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/Improving-image-quality" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/experimental/arbitary-style-transfer/arbitrary-style-transfer" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/neural_networks/arbitary-style-transfer/arbitrary-style-transfer" vcs="Git" />
+  </component>
+</project>

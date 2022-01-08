@@ -1,14 +1,12 @@
-import numpy as np
-import os
-import matplotlib.pyplot as plt
 from datetime import datetime
+
+import keras.backend as K
 import tensorflow as tf
+import tensorflow_addons as tfa
 from tensorflow import keras
 from tensorflow.keras import layers
-import keras.backend as K
-import tensorflow_addons as tfa
-from mylibrary import *
-from sklearn.utils import shuffle
+
+from utils.mykeras_utils import *
 
 physical_devices = tf.config.list_physical_devices('GPU')
 tf.config.experimental.set_memory_growth(physical_devices[0], True)
@@ -24,83 +22,12 @@ full_size = height * width * img_channel
 kernel_init = keras.initializers.RandomNormal(mean=0.0, stddev=0.02)
 # Gamma initializer for instance normalization.
 gamma_init = keras.initializers.RandomNormal(mean=0.0, stddev=0.02)
+batch_size = 2
+# Loss function for evaluating adversarial loss
+adv_loss_fn = keras.losses.MeanSquaredError()
 
-batch_size = 1
-
-
-def normalize_img(img):
-    img = tf.cast(img, dtype=tf.float32)
-    # Map values in the range [-1, 1]
-    return (img / 127.5) - 1.0
-
-
-datasetB = read_dir("image_for_cycle", height, width, True)
-datasetB = shuffle(datasetB)
-
-for i in range(1400):
-    datasetB[i] = cv2.medianBlur(datasetB[i], 5)
-    datasetB[i] = cv2.GaussianBlur(datasetB[i], (0, 0), 1)
-
-datasetB = 2 * np.expand_dims(datasetB, axis=-1) - 1
-for i in range(1400):
-    datasetB[i] = tf.image.random_flip_left_right(datasetB[i])
-
-datasetA = read_dir("final_bin_2000", height, width, True)
-datasetA = shuffle(datasetA)
-datasetA = 2 * np.expand_dims(datasetA, axis=-1) - 1
-
-for i in range(1400):
-    datasetA[i] = tf.image.random_flip_left_right(datasetA[i])
-
-# dataset = tf.convert_to_tensor(dataset)
-train_A, train_B = datasetA[0:2000], datasetB[0:2000]
-test_A, test_B = datasetA[2000:2100], datasetB[2000:2100]
-train_A = tf.data.Dataset.from_tensor_slices(train_A).batch(batch_size)
-train_B = tf.data.Dataset.from_tensor_slices(train_B).batch(batch_size)
-test_A = tf.data.Dataset.from_tensor_slices(test_A).batch(batch_size)
-test_B = tf.data.Dataset.from_tensor_slices(test_B).batch(batch_size)
-"""
-## Visualize some samples
-"""
-
-_, ax = plt.subplots(4, 2, figsize=(10, 15))
-for i, samples in enumerate(zip(train_A.take(4), train_B.take(4))):
-    A = (((samples[0][0] * 127.5) + 127.5).numpy()).astype(np.uint8)
-    B = (((samples[1][0] * 127.5) + 127.5).numpy()).astype(np.uint8)
-    ax[i, 0].imshow(A, 'gray')
-    ax[i, 1].imshow(B, 'gray')
-plt.show()
-"""
-## Building blocks used in the CycleGAN generators and discriminators
-"""
-
-
-class ReflectionPadding2D(layers.Layer):
-    """Implements Reflection Padding as a layer.
-    Args:
-        padding(tuple): Amount of padding for the
-        spatial dimensions.
-    Returns:
-        A padded tensor with the same type as the input tensor.
-    """
-
-    def __init__(self, padding=(1, 1), name=None, **kwargs):
-        self.padding = tuple(padding)
-        super(ReflectionPadding2D, self).__init__(**kwargs)
-
-    def call(self, input_tensor, mask=None):
-        padding_width, padding_height = self.padding
-        padding_tensor = [
-            [0, 0],
-            [padding_height, padding_height],
-            [padding_width, padding_width],
-            [0, 0],
-        ]
-        return tf.pad(input_tensor, padding_tensor, mode="REFLECT")
-
-    def get_config(self):
-        config = super(ReflectionPadding2D, self).get_config()
-        return config
+imageA_path = "../datasets/cycle/mask"
+imageB_path = "../datasets/cycle/imgs"
 
 
 def residual_block(x, activation, kernel_initializer=kernel_init, kernel_size=(3, 3), strides=(1, 1), padding="valid",
@@ -146,7 +73,7 @@ def upsample(
         x,
         filters,
         activation,
-        kernel_size=(3, 3),
+        kernel_size=(2, 2),
         strides=(2, 2),
         padding="same",
         kernel_initializer=kernel_init,
@@ -217,21 +144,6 @@ def get_discriminator(filters=64, kernel_initializer=kernel_init, num_downsampli
     return model
 
 
-# Get the generators
-gen_G = get_resnet_generator(name="generator_G")
-gen_F = get_resnet_generator(name="generator_F")
-
-gen_G.summary()
-gen_F.summary()
-# Get the discriminators
-disc_X = get_discriminator(name="discriminator_X")
-disc_Y = get_discriminator(name="discriminator_Y")
-disc_X.summary()
-disc_Y.summary()
-gen_G.summary()
-gen_F.summary()
-
-
 def pixel_distance(real_images, generated_images):
     d = K.sum(K.square(real_images - generated_images))
     return d / full_size
@@ -258,6 +170,9 @@ class CycleGan(keras.Model):
         self.discriminator_loss_fn = disc_loss_fn
         self.cycle_loss_fn = keras.losses.MeanAbsoluteError()
         self.identity_loss_fn = keras.losses.MeanAbsoluteError()
+
+    def call(self, input_tensor, mask=None, **kwargs):
+        pass
 
     # override
     def train_step(self, batch_data):
@@ -363,24 +278,24 @@ class CycleGan(keras.Model):
         }
 
     def save(self, name, **kwargs):
-        self.gen_G.save(name + "gen_G.h5")
-        self.gen_F.save(name + "gen_F.h5")
-        self.disc_X.save(name + "disc_X.h5")
-        self.disc_Y.save(name + "disc_Y.h5")
+        self.gen_G.save(name + "/gen_G.h5")
+        self.gen_F.save(name + "/gen_F.h5")
+        self.disc_X.save(name + "/disc_X.h5")
+        self.disc_Y.save(name + "/disc_Y.h5")
 
     def save_weights(self, name, **kwargs):
         if not os.path.exists(name):
             os.makedirs(name)
-        self.gen_G.save_weights(name + "gen_G.h5")
-        self.gen_F.save_weights(name + "gen_F.h5")
-        self.disc_X.save_weights(name + "disc_X.h5")
-        self.disc_Y.save_weights(name + "disc_Y.h5")
+        self.gen_G.save_weights(name + "/gen_G.h5")
+        self.gen_F.save_weights(name + "/gen_F.h5")
+        self.disc_X.save_weights(name + "/disc_X.h5")
+        self.disc_Y.save_weights(name + "/disc_Y.h5")
 
     def load_weights(self, name, **kwargs):
-        self.gen_G.load_weights(name + "gen_G.h5")
-        self.gen_F.load_weights(name + "gen_F.h5")
-        self.disc_X.load_weights(name + "disc_X.h5")
-        self.disc_Y.load_weights(name + "disc_Y.h5")
+        self.gen_G.load_weights(name + "/gen_G.h5")
+        self.gen_F.load_weights(name + "/gen_F.h5")
+        self.disc_X.load_weights(name + "/disc_X.h5")
+        self.disc_Y.load_weights(name + "/disc_Y.h5")
 
 
 """
@@ -391,25 +306,30 @@ class CycleGan(keras.Model):
 class GANMonitor(keras.callbacks.Callback):
     """A callback to generate and save images after each epoch"""
 
-    def __init__(self, num_img=4):
+    def __init__(self, cycle_gan_model, gen, num_img=4):
         self.num_img = num_img
+        self.gen = gen
+        self.model = cycle_gan_model
 
     def on_epoch_end(self, epoch, logs=None):
         _, ax = plt.subplots(4, 2, figsize=(12, 12))
-        for i, img in enumerate(test_A.take(self.num_img)):
-            prediction = self.model.gen_G(img)[0].numpy()
-            prediction = (prediction * 127.5 + 127.5).astype(np.uint8)
-            img = (img[0] * 127.5 + 127.5).numpy().astype(np.uint8)
-
-            ax[i, 0].imshow(img, 'gray')
-            ax[i, 1].imshow(prediction, 'gray')
+        test_A = []
+        while len(test_A) < self.num_img:
+            t, _ = self.gen.next()
+            test_A.extend(list(t))
+        test_A = test_A[:self.num_img]
+        test_A = np.asarray(test_A)
+        prediction = self.model.gen_G(test_A)
+        for i, (img, pred) in enumerate(zip(test_A, prediction)):
+            pr = (pred.numpy() * 127.5 + 127.5).astype(np.uint8)
+            im = (img * 127.5 + 127.5).astype(np.uint8)
+            ax[i, 0].imshow(im, 'gray')
+            ax[i, 1].imshow(pr, 'gray')
             ax[i, 0].set_title("Input image")
             ax[i, 1].set_title("Translated image")
             ax[i, 0].axis("off")
             ax[i, 1].axis("off")
-
-            prediction = keras.preprocessing.image.array_to_img(prediction)
-            prediction.save("cycle_result/generated_img_{i}_{epoch}.png".format(i=i, epoch=epoch + 1))
+            cv2.imwrite("../results/cycle_result/generated_img_{i}_{epoch}.png".format(i=i, epoch=epoch + 1), pr)
         plt.show()
         plt.close()
 
@@ -417,9 +337,6 @@ class GANMonitor(keras.callbacks.Callback):
 """
 ## Train the end-to-end model
 """
-
-# Loss function for evaluating adversarial loss
-adv_loss_fn = keras.losses.MeanSquaredError()
 
 
 # Define the loss function for the generators
@@ -435,61 +352,96 @@ def discriminator_loss_fn(real, fake):
     return (real_loss + fake_loss) * 0.5
 
 
-# Create cycle gan model
-cycle_gan_model = CycleGan(
-    generator_G=gen_G, generator_F=gen_F, discriminator_X=disc_X, discriminator_Y=disc_Y
-)
+def load_dataset(mask_dir, data_dir, subset=None):
+    aug = AugmentationUtils() \
+        .rescale(stdNorm=True) \
+        .horizontal_flip() \
+        .vertical_flip() \
+        .reflect_rotation() \
+        .validation_split()
+    genA = aug.create_generator(mask_dir,
+                                target_size=orig_img_size,
+                                batch_size=batch_size,
+                                color_mode='grayscale',
+                                class_mode=None,
+                                subset=subset)
 
-# Compile the model
-cycle_gan_model.compile(
-    gen_G_optimizer=keras.optimizers.Adam(learning_rate=2e-4, beta_1=0.5),
-    gen_F_optimizer=keras.optimizers.Adam(learning_rate=2e-4, beta_1=0.5),
-    disc_X_optimizer=keras.optimizers.Adam(learning_rate=2e-4, beta_1=0.5),
-    disc_Y_optimizer=keras.optimizers.Adam(learning_rate=2e-4, beta_1=0.5),
-    gen_loss_fn=generator_loss_fn,
-    disc_loss_fn=discriminator_loss_fn,
-)
+    aug = AugmentationUtils() \
+        .rescale(stdNorm=True) \
+        .add_median_blur() \
+        .add_gaussian_blur() \
+        .horizontal_flip() \
+        .vertical_flip() \
+        .reflect_rotation() \
+        .validation_split()
+    genB = aug.create_generator(data_dir,
+                                target_size=orig_img_size,
+                                batch_size=batch_size,
+                                color_mode='grayscale',
+                                class_mode=None,
+                                subset=subset)
+
+    return genA, genB
 
 
-def train(weight_file=""):
+def get_cycleGAN():
+    # Get the generators
+    gen_G = get_resnet_generator(name="generator_G")
+    gen_F = get_resnet_generator(name="generator_F")
+    # Get the discriminators
+    disc_X = get_discriminator(name="discriminator_X")
+    disc_Y = get_discriminator(name="discriminator_Y")
+    # disc_X.summary()
+    # disc_Y.summary()
+    # gen_G.summary()
+    # gen_F.summary()
+
+    # Create cycle gan model
+    cycle_gan_model = CycleGan(
+        generator_G=gen_G, generator_F=gen_F, discriminator_X=disc_X, discriminator_Y=disc_Y
+    )
+
+    # Compile the model
+    cycle_gan_model.compile(
+        gen_G_optimizer=keras.optimizers.Adam(learning_rate=2e-4, beta_1=0.5),
+        gen_F_optimizer=keras.optimizers.Adam(learning_rate=2e-4, beta_1=0.5),
+        disc_X_optimizer=keras.optimizers.Adam(learning_rate=2e-4, beta_1=0.5),
+        disc_Y_optimizer=keras.optimizers.Adam(learning_rate=2e-4, beta_1=0.5),
+        gen_loss_fn=generator_loss_fn,
+        disc_loss_fn=discriminator_loss_fn,
+    )
+    return cycle_gan_model
+
+
+def train(cycle_gan_model, train_dataset, test_dataset, weight_file=""):
     if weight_file != "":
         cycle_gan_model.load_weights(weight_file)
     # Callbacks
-    plotter = GANMonitor()
+    plotter = GANMonitor(cycle_gan_model, test_dataset)
     # checkpoint_filepath = "./model_checkpoints/cyclegan_checkpoints.{epoch:03d}"
-    now = datetime.now().strftime("%m/%d/%H:%M/")
-    model_checkpoint_callback = keras.callbacks.ModelCheckpoint('cycle_result/models/model' + now, save_best_only=True,
-                                                                monitor='acc', mode='min', save_weights_only=True)
     # model_checkpoint_callback = keras.callbacks.ModelCheckpoint(filepath=checkpoint_filepath)
-
-    history = cycle_gan_model.fit(tf.data.Dataset.zip((train_A, train_B)), epochs=3,
+    now = datetime.now().strftime("%m%d%H:%M")
+    model_checkpoint_callback = keras.callbacks.ModelCheckpoint('../models/cycleGAN/model' + now,
+                                                                save_best_only=True,
+                                                                monitor='acc', mode='min', save_weights_only=True)
+    t = len(train_dataset)
+    v = len(test_dataset)
+    history = cycle_gan_model.fit(train_dataset, steps_per_epoch=t, epochs=20, validation_data=test_dataset,
+                                  validation_steps=v,
                                   callbacks=[plotter, model_checkpoint_callback])
     plot_graphs(history.history)
-    # cycle_gan_model.save(name='models/model' + now)
 
 
-def plot_graphs(history):
-    for key in history:
-        plt.figure()
-        loss = history[key]
-        epochs = range(1, len(loss) + 1)
-        plt.plot(epochs, loss)
-        plt.title(key)
-        plt.xlabel('Epochs')
-        plt.ylabel(key)
-    plt.show()
-
-
-def test():
+def test(cycle_gan_model, test_A):
     # Load the checkpoints
-    weight_file = "cycle_result/models/model11/17/16:08/"
+    weight_file = "../models/cycleGAN/model010419:50"
     cycle_gan_model.load_weights(weight_file)
 
     _, ax = plt.subplots(4, 2, figsize=(10, 15))
-    for i, img in enumerate(test_A.take(4)):
-        prediction = cycle_gan_model.gen_G(img, training=False)[0].numpy()
-        prediction = (prediction * 127.5 + 127.5).astype(np.uint8)
-        img = (img[0] * 127.5 + 127.5).numpy().astype(np.uint8)
+    for i, img in enumerate(gen_to_images(test_A, count=4, wrap=True)):
+        prediction = cycle_gan_model.gen_G(img, training=False)[0]
+        prediction = (prediction * 127.5 + 127.5).numpy().astype(np.uint8)
+        img = (img[0] * 127.5 + 127.5).astype(np.uint8)
 
         ax[i, 0].imshow(img, 'gray')
         ax[i, 1].imshow(prediction, 'gray')
@@ -500,39 +452,43 @@ def test():
         ax[i, 1].axis("off")
 
         prediction = keras.preprocessing.image.array_to_img(prediction)
-        prediction.save("cycle_result/predicted_img_{i}.png".format(i=i))
+        prediction.save("../results/cycle_result/predicted_img_{i}.png".format(i=i))
     plt.tight_layout()
     plt.show()
 
 
-def check():
-    weight_file = "cycle_result/models/model11/17/18:52/"
+def check(cycle_gan_model, test_A):
+    weight_file = "../models/cycleGAN/model010419:50"
     cycle_gan_model.load_weights(weight_file)
     res = []
-    for i, img in enumerate(test_A):
-        prediction = cycle_gan_model.gen_G(img, training=False)[0].numpy()
+    for img in gen_to_images(test_A, wrap=True):
+        prediction = cycle_gan_model.gen_G(img, training=False)[0]
         prediction = prediction
-        img = img[0].numpy()
+        img = img[0]
         res.append(np.concatenate((img, prediction), axis=1))
-    save_images(np.asarray(res), 'cycle_result/test_images3/', stdNorm=True)
+    save_images(np.asarray(res), '../results/cycle_result/test_images3/', stdNorm=True)
 
 
-def check2():
-    weight_file = "cycle_result/models/model11/17/16:08/"
+def check2(cycle_gan_model, test_B):
+    weight_file = "../models/cycleGAN/model010419:50"
     cycle_gan_model.load_weights(weight_file)
     res = []
-    for i, img in enumerate(test_B):
-        prediction = cycle_gan_model.gen_F(img, training=False)[0].numpy()
+    for img in gen_to_images(test_B, wrap=True):
+        prediction = cycle_gan_model.gen_F(img, training=False)[0]
         prediction = prediction
-        img = img[0].numpy()
+        img = img[0]
         res.append(np.concatenate((img, prediction), axis=1))
-    save_images(np.asarray(res), 'cycle_result/test_images2/', stdNorm=True)
+    save_images(np.asarray(res), '../results/cycle_result/test_images2/', stdNorm=True)
 
 
 mode_test = True
 if __name__ == '__main__':
+    model = get_cycleGAN()
+    train_A, train_B = load_dataset(imageA_path, imageB_path, subset='training')
+    val_A, val_B = load_dataset(imageA_path, imageB_path, subset='validation')
     if mode_test:
-        check()
-        # test()
+        check2(model, val_B)
+        check(model, val_A)
+        # test(model, val_A)
     else:
-        train()
+        train(model, UnionGenerator([train_A, train_B], batch_size), UnionGenerator([val_A, val_B], batch_size))
