@@ -6,6 +6,7 @@ from tensorflow.keras.utils import Sequence
 from scipy import linalg
 from utils.noisy import *
 from tensorflow.keras import layers
+from keras.applications.inception_v3 import InceptionV3
 
 
 class ReflectionPadding2D(layers.Layer):
@@ -206,9 +207,9 @@ class AugmentationUtils:
 
     def add_median_blur(self, k=5):
         def f(image):
-            cv2.medianBlur(image, k, image)
-            return image
-
+            img = np.ascontiguousarray(image, dtype=np.float32)
+            cv2.medianBlur(img, k, img)
+            return img
         self.operators.append(f)
         return self
 
@@ -229,7 +230,7 @@ class AugmentationUtils:
         return self
 
 
-def gen_to_images(generator, count=None, wrap=False):
+def batch_to_image(generator, count=None, wrap=False):
     def wrapper(data, wrap=False):
         if wrap:
             return np.asarray([data])
@@ -253,16 +254,21 @@ def gen_to_images(generator, count=None, wrap=False):
                 return
 
 
-def get_gen_images(generator):
-    images = []
-    for im in gen_to_images(generator):
-        images.append(im[0])
-    return np.asarray(images)
+def get_gen_images(generator, count=1):
+    images = [[] for i in range(count)]
+    for data in batch_to_image(generator):
+        for i, im in enumerate(data):
+            images[i].append(im)
+    images = [np.asarray(res) for res in images]
+    if count > 1:
+        return images
+    else:
+        return images[0]
 
 
 def test_generator(save_dir, generator, count=None, stdNorm=False):
     imgs = []
-    for img in gen_to_images(generator, count=count, wrap=False):
+    for img in batch_to_image(generator, count=count, wrap=False):
         imgs.append(np.vstack(img))
     save_images(imgs, save_dir, stdNorm=stdNorm)
 
@@ -304,9 +310,9 @@ def scan_image(gen, image, h, w, step=8, e=0.01):
     return ans
 
 
-def test_real_frame(model_path, image_path, stdNorm=False, interpolate=False):
+def test_real_frame(model_path, image_path, output_path='scan_results/', stdNorm=False, interpolate=False):
     gen = keras.models.load_model(model_path)
-    return process_real_frame(gen, image_path, stdNorm, interpolate)
+    return process_real_frame(gen, image_path, output_path=output_path, stdNorm=stdNorm, interpolate=interpolate)
 
 
 def process_real_frame(gen, image_path, output_path='scan_results/', stdNorm=False, interpolate=False):
@@ -394,6 +400,14 @@ def debug_get_activations(model, test_image):
         plt.title(layer_name)
         plt.grid(False)
         plt.imshow(display_grid, aspect='auto', cmap='viridis')
+
+
+def get_fid(real_images, fake_images):
+    # input_shape = (299, 299, 3)
+    model = InceptionV3(include_top=False, pooling='avg', input_shape=real_images[0].shape)
+    act1 = model.predict(real_images)
+    act2 = model.predict(fake_images)
+    return calculate_fid(act1, act2)
 
 
 # gan loss

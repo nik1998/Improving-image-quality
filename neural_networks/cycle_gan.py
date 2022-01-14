@@ -438,7 +438,7 @@ def test(cycle_gan_model, test_A):
     cycle_gan_model.load_weights(weight_file)
 
     _, ax = plt.subplots(4, 2, figsize=(10, 15))
-    for i, img in enumerate(gen_to_images(test_A, count=4, wrap=True)):
+    for i, img in enumerate(batch_to_image(test_A, count=4, wrap=True)):
         prediction = cycle_gan_model.gen_G(img, training=False)[0]
         prediction = (prediction * 127.5 + 127.5).numpy().astype(np.uint8)
         img = (img[0] * 127.5 + 127.5).astype(np.uint8)
@@ -461,7 +461,7 @@ def check(cycle_gan_model, test_A):
     weight_file = "../models/cycleGAN/model010419:50"
     cycle_gan_model.load_weights(weight_file)
     res = []
-    for img in gen_to_images(test_A, wrap=True):
+    for img in batch_to_image(test_A, wrap=True):
         prediction = cycle_gan_model.gen_G(img, training=False)[0]
         prediction = prediction
         img = img[0]
@@ -473,7 +473,7 @@ def check2(cycle_gan_model, test_B):
     weight_file = "../models/cycleGAN/model010419:50"
     cycle_gan_model.load_weights(weight_file)
     res = []
-    for img in gen_to_images(test_B, wrap=True):
+    for img in batch_to_image(test_B, wrap=True):
         prediction = cycle_gan_model.gen_F(img, training=False)[0]
         prediction = prediction
         img = img[0]

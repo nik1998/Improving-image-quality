@@ -1,5 +1,5 @@
 # https://towardsdatascience.com/canny-edge-detection-step-by-step-in-python-computer-vision-b49c3a2d8123
-from img_filters import *
+from utils.img_filters import *
 import numpy as np
 
 

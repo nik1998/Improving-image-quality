@@ -30,50 +30,30 @@ def plot_graphs(history):
     plt.show()
 
 
-def split_image(image, x):
+def split_image(image, x, step=128):
     small_array = []
-    for i in range(x, image.shape[0] + 1, x):
-        for j in range(x, image.shape[1] + 1, x):
+    for i in range(x, image.shape[0] + 1, step):
+        for j in range(x, image.shape[1] + 1, step):
             small_array.append(image[i - x:i, j - x:j])
     h = image.shape[0] - image.shape[0] % x
     w = image.shape[1] - image.shape[1] % x
     return small_array, h, w
 
 
-def recursive_read_split(image_path, x, inmemory=True, drop=0.5):
-    return np.asarray(prepare_dataset(image_path, x, inmemory, drop))
-
-
-def prepare_dataset(image_path, x, inmemory=False, drop=0.5):
+def prepare_dataset(image_path, output_path, imsize, step=128, drop=0.5, inmemory=False):
     print(image_path)
-    new_dataset = []
-    train_path = '../datasets/train_images/'
-    val_path = 'val_images/'
-    test_path = '../datasets/test_images/'
     for dr in os.listdir(image_path):
         abs_path = os.path.join(image_path, dr)
         if os.path.isdir(abs_path):
-            new_dataset += prepare_dataset(abs_path, x, inmemory)
+            prepare_dataset(abs_path, output_path, imsize, step, drop, inmemory)
         elif 'jpg' == dr[-3:] or 'bmp' == dr[-3:]:
             print('Add file:' + abs_path)
             img = read_image(abs_path)
-            ar, _, _ = split_image(img, x)
-            if inmemory:
-                new_dataset.append(ar)
-            else:
-                images = shuffle(np.asarray(ar))
-                d = len(images)
-                images = images[int(drop * d):]
-                p = random.random()
-                if p < 0.8:
-                    save_images(images, train_path)
-                elif p < 0.9:
-                    save_images(images, val_path)
-                else:
-                    save_images(images, test_path)
-    if inmemory:
-        return new_dataset
-    return train_path, val_path, test_path
+            ar, _, _ = split_image(img, imsize, step)
+            images = shuffle(np.asarray(ar))
+            d = len(images)
+            images = images[int(drop * d):]
+            save_images(images, output_path)
 
 
 inn = 0
@@ -107,13 +87,13 @@ def read_image(imageName: string, height=0, width=0, gray=True):
     return np.asarray(im, dtype=np.float32) / 255
 
 
-def read_dir(imagePath, height, width, sort=False):
+def read_dir(imagePath, height, width, sort=False, gray=True):
     dir = os.listdir(imagePath)
     if sort:
         dir = sorted(dir)
     dir_images = []
     for l in dir:
-        dir_images.append(read_image(os.path.join(imagePath, l), height, width))
+        dir_images.append(read_image(os.path.join(imagePath, l), height, width, gray=gray))
     return np.asarray(dir_images)
 
 
@@ -125,7 +105,8 @@ def showImage(image):
 
 def unionTestImages(act, predict, hsize=5, wsize=10, path="unionTest/", stdNorm=True):
     conImages = []
-    for i in range(0, act.shape[0], wsize * hsize):
+    total = act.shape[0] - act.shape[0] % (wsize * hsize)
+    for i in range(0, total, wsize * hsize):
         img = None
         for j in range(hsize):
             l = i + wsize * j
@@ -185,6 +166,17 @@ def plotHist(all_images):
     # plt.xlim(0, 255)
     plt.grid(True)
     plt.show()
+
+
+def concat_clip_save(images, savepath, rowcount):
+    r = []
+
+    for i in range(0, len(images), rowcount):
+        r.append(np.concatenate(images[i:i + rowcount], axis=1))
+
+    c1 = np.concatenate(r, axis=0)
+    c1 = np.clip(c1, 0.0, 1.0)
+    cv2.imwrite(savepath, c1 * 255)
 
 
 def unionImage(images, h, w):
