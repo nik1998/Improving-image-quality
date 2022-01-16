@@ -245,7 +245,7 @@ def image_complex_bin(img):
 
 def get_dataset():
     # prepare_dataset('/home/nik/images/', 'datasets/global_images/', 256, step=256, drop=0.9)
-    prepare_dataset('datasets/semiconductor_internet', 'datasets/test_sem_internet/', 256, step=256, drop=0)
+    prepare_dataset('datasets/balanced_images', 'datasets/final_good_images/train/', 256, step=256, drop=0)
 
 
 if __name__ == '__main__':

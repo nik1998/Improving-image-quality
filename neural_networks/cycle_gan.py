@@ -357,7 +357,7 @@ def load_dataset(mask_dir, data_dir, subset=None):
         .rescale(stdNorm=True) \
         .horizontal_flip() \
         .vertical_flip() \
-        .reflect_rotation() \
+        .ninty_rotation() \
         .validation_split()
     genA = aug.create_generator(mask_dir,
                                 target_size=orig_img_size,
@@ -372,7 +372,7 @@ def load_dataset(mask_dir, data_dir, subset=None):
         .add_gaussian_blur() \
         .horizontal_flip() \
         .vertical_flip() \
-        .reflect_rotation() \
+        .ninty_rotation() \
         .validation_split()
     genB = aug.create_generator(data_dir,
                                 target_size=orig_img_size,

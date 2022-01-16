@@ -272,7 +272,7 @@ if __name__ == "__main__":
         .rescale() \
         .horizontal_flip() \
         .vertical_flip() \
-        .reflect_rotation() \
+        .ninty_rotation() \
         .validation_split()
     train_content, val_content = aug.train_val_generator(content_dir,
                                                          color_mode="rgb",
@@ -284,7 +284,7 @@ if __name__ == "__main__":
         .rescale() \
         .horizontal_flip() \
         .vertical_flip() \
-        .reflect_rotation() \
+        .ninty_rotation() \
         .validation_split()
     train_style, val_style = aug.train_val_generator(style_dir,
                                                      color_mode="rgb",

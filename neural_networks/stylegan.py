@@ -339,7 +339,7 @@ class StyleGAN(object):
         self.GAN.GenModel()
         self.GAN.GenModelA()
 
-        self.GAN.G.summary()
+        #self.GAN.G.summary()
 
         # Data generator
         self.generator = generator
@@ -354,7 +354,6 @@ class StyleGAN(object):
         self.nones = -self.ones
 
         self.pl_mean = 0
-        self.av = np.zeros([44])
 
     def train(self):
 
@@ -368,6 +367,7 @@ class StyleGAN(object):
         apply_gradient_penalty = self.GAN.steps % 2 == 0 or self.GAN.steps < 10000
         apply_path_penalty = self.GAN.steps % 16 == 0
         images = self.generator.next()
+        # error generator return images less then batch_size
         if len(images) < BATCH_SIZE:
             self.generator.on_epoch_end()
             images = self.generator.next()
@@ -478,11 +478,10 @@ class StyleGAN(object):
 
         return disc_loss, gen_loss, divergence, pl_lengths
 
-    def evaluate(self, num=0, trunc=1.0):
+    def evaluate(self, num=0):
 
         n1 = noiseList(64)
         n2 = nImage(64)
-        # trunc = np.ones([64, 1]) * trunc
 
         generated_images = self.GAN.GM.predict(n1 + [n2], batch_size=BATCH_SIZE)
 
@@ -491,7 +490,6 @@ class StyleGAN(object):
         # Moving Average
 
         generated_images = self.GAN.GMA.predict(n1 + [n2], batch_size=BATCH_SIZE)
-        # generated_images = self.generateTruncated(n1, trunc = trunc)
 
         concat_clip_save(generated_images, "../results/styleGAN/i" + str(num) + "-ema.png", 8)
 
@@ -507,25 +505,22 @@ class StyleGAN(object):
         latent = p1 + [] + p2
 
         generated_images = self.GAN.GMA.predict(latent + [nImage(64)], batch_size=BATCH_SIZE)
-        # generated_images = self.generateTruncated(latent, trunc = trunc)
 
         concat_clip_save(generated_images, "../results/styleGAN/i" + str(num) + "-mr.png", 8)
 
-    def generateTruncated(self, style, noi=np.zeros([44]), trunc=0.5, outImage=False, num=0):
+    def generateTruncated(self, style, noi=None, trunc=0.5, outImage=False, avg=True, num=0):
 
-        # Get W's center of mass
-        if self.av.shape[0] == 44:  # 44 is an arbitrary value
-            print("Approximating W center of mass")
-            self.av = np.mean(self.GAN.S.predict(noise(2000), batch_size=64), axis=0)
-            self.av = np.expand_dims(self.av, axis=0)
+        av = np.zeros((1, latent_size))
+        if avg:
+            av = np.mean(self.GAN.S.predict(noise(2000), batch_size=64), axis=0, keepdims=True)
 
-        if noi.shape[0] == 44:
+        if noi is None:
             noi = nImage(64)
 
         w_space = []
         for i in range(len(style)):
             tempStyle = self.GAN.S.predict(style[i])
-            tempStyle = trunc * (tempStyle - self.av) + self.av
+            tempStyle = (1 - trunc) * tempStyle + trunc * av
             w_space.append(tempStyle)
 
         generated_images = self.GAN.GE.predict(w_space + [noi], batch_size=BATCH_SIZE)
@@ -580,15 +575,15 @@ if __name__ == "__main__":
         .rescale() \
         .horizontal_flip() \
         .vertical_flip() \
-        .reflect_rotation()
-    gen = aug.create_generator("../datasets/global_images",
+        .ninty_rotation()
+    gen = aug.create_generator("../datasets/final_good_images",
                                target_size=(im_size, im_size),
                                batch_size=BATCH_SIZE,
                                color_mode='rgb',
                                class_mode=None)
 
     model = StyleGAN(gen, lr=0.0001, silent=False)
-    #model.load(1)
+    # model.load(1)
     model.evaluate(0)
 
     while model.GAN.steps <= 200000:

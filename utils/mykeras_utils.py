@@ -210,6 +210,7 @@ class AugmentationUtils:
             img = np.ascontiguousarray(image, dtype=np.float32)
             cv2.medianBlur(img, k, img)
             return img
+
         self.operators.append(f)
         return self
 
@@ -221,7 +222,7 @@ class AugmentationUtils:
         self.operators.append(f)
         return self
 
-    def reflect_rotation(self):
+    def ninty_rotation(self):
         def f(image):
             i = random.randint(0, 4)
             return np.rot90(image, k=i)
