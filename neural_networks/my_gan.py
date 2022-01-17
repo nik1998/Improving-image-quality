@@ -17,7 +17,7 @@ channels = 1
 # important articles:
 # https://towardsdatascience.com/style-transfer-with-gans-on-hd-images-88e8efcf3716
 class AdvLoss(keras.layers.Layer):
-    def __init__(self, **kwargs):
+    def  __init__(self, **kwargs):
         super(AdvLoss, self).__init__(**kwargs)
 
     def call(self, x, mask=None):

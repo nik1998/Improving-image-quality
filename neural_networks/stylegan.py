@@ -339,7 +339,7 @@ class StyleGAN(object):
         self.GAN.GenModel()
         self.GAN.GenModelA()
 
-        #self.GAN.G.summary()
+        # self.GAN.G.summary()
 
         # Data generator
         self.generator = generator
@@ -508,12 +508,12 @@ class StyleGAN(object):
 
         concat_clip_save(generated_images, "../results/styleGAN/i" + str(num) + "-mr.png", 8)
 
-    def generateTruncated(self, style, noi=None, trunc=0.5, outImage=False, avg=True, num=0):
+    def generateTruncated(self, style, noi=None, trunc=0.5, outImage=False, avg=False, num=0):
 
-        av = np.zeros((1, latent_size))
         if avg:
             av = np.mean(self.GAN.S.predict(noise(2000), batch_size=64), axis=0, keepdims=True)
-
+        else:
+            av = np.zeros((1, latent_size))
         if noi is None:
             noi = nImage(64)
 
