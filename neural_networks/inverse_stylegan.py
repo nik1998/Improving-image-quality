@@ -4,15 +4,35 @@ import numpy as np
 from tqdm import tqdm
 
 from neural_networks.stylegan import *
+from tensorflow.keras.applications import ResNet50
+
+
+def build_resnet50_unet(input_shape):
+    """ Input """
+    # inputs = Input(input_shape)
+
+    """ Pre-trained ResNet50 Model """
+    resnet50 = ResNet50(include_top=False, weights="imagenet", input_shape=input_shape)
+    resnet50.trainable = False
+    return resnet50
+
+
+def build_vgg(input_shape):
+    vgg19 = tf.keras.applications.VGG19(
+        include_top=False, weights="imagenet", input_shape=input_shape
+    )
+    vgg19.trainable = False
+    return vgg19
 
 
 class Encoder:
-    def __init__(self, model, steps, n1=None, n2=None):
+    def __init__(self, model, steps, encoder=None, n1=None, n2=None):
         self.model = model
         self.steps = steps
         self.loss_hist = []
         self.n1 = n1
         self.n2 = n2
+        self.encoder = encoder
 
     def encode_images(self, gen):
         res1 = []
@@ -37,7 +57,10 @@ class Encoder:
 
         x1 = tf.Variable(n1)
         x2 = tf.Variable(n2)
-        target = tf.constant(images)
+        if self.encoder is None:
+            target = tf.constant(images)
+        else:
+            target = tf.constant(self.encoder(images))
 
         hist = []
         for lr, nb in tqdm(self.steps):
@@ -92,13 +115,41 @@ class StyleEncoder(Encoder):
 
 class UnionEncoder(Encoder):
     def __init__(self, model):
-        super().__init__(model, [(0.001, 200), (0.0005, 200), (0.0002, 300)])
+        super().__init__(model, [(0.002, 200), (0.001, 200), (0.0005, 100), (0.0002, 100), (0.0001, 100)])
+
+    def _opt_step(self, x1, x2, target, lr):
+        # opt = tf.keras.optimizers.Adam(learning_rate=lr)
+        with tf.GradientTape(persistent=True) as g:
+            result = self.model.GAN.GMA([x1] * 7 + [x2])
+            loss = tf.reduce_sum(tf.abs(result - target), axis=[1, 2, 3])
+            loss = tf.reduce_mean(loss)
+            # loss = tf.reduce_mean((result - target) ** 2) * 1e5
+        dx1 = g.gradient(loss, x1)
+        # opt.apply_gradients(dx1)
+        x1.assign(x1 - lr * dx1)
+        dx2 = g.gradient(loss, x2)
+        # opt.apply_gradients((dx2, x2))
+        x2.assign(x2 - lr * dx2)
+        print(loss)
+        return loss
+
+    def transform(self, x1, x2):
+        l = np.repeat(np.expand_dims(x1, axis=0), 7, axis=0)
+        l = list(l) + [x2]
+        return self.model.GAN.GMA(l).numpy()
+
+
+class UnionEncoderWithPretrained(Encoder):
+    def __init__(self, model, encoder):
+        self.encoder = encoder
+        super().__init__(model, [(0.2, 200), (0.1, 100), (0.02, 100), (0.01, 100)], encoder=encoder)
 
     def _opt_step(self, x1, x2, target, lr):
         with tf.GradientTape(persistent=True) as g:
             result = self.model.GAN.GMA([x1] * 7 + [x2])
+            result = self.encoder(result)
             loss = tf.reduce_sum(tf.abs(result - target), axis=[1, 2, 3])
-            # loss = tf.reduce_mean(loss)
+            loss = tf.reduce_mean(loss)
             # loss = tf.reduce_mean((result - target) ** 2) * 1e5
         dx1 = g.gradient(loss, x1)
         x1.assign(x1 - lr * dx1)
@@ -119,21 +170,22 @@ def mixed_style(model, s1, s2, noise):
     p2 = [s2] * (n_layers - tt)
     latent = p1 + [] + p2
     im = model.GAN.GMA(latent + [noise]).numpy()
-    save_images(im, "../results/styleGAN/style_merge")
+    save_images(im, "../results/styleGAN_inverse/style_merge")
 
 
 if __name__ == "__main__":
     aug = AugmentationUtils() \
         .rescale()
 
+    batch_size = 2
     gen = aug.create_generator("../datasets/test_sem_internet",
                                target_size=(im_size, im_size),
-                               batch_size=2,
+                               batch_size=1,
                                color_mode='rgb',
                                class_mode=None)
     model = StyleGAN(None)
-    model.load(20)
-    image_dir = "../results/styleGAN/images"
+    model.load(19)
+    image_dir = "../results/styleGAN_inverse/inv_images"
 
     # encoder = NoiseEncoder(model)
     # _, nres = encoder.encode_images(gen)
@@ -172,13 +224,15 @@ if __name__ == "__main__":
     # mixed_style(model, x1[1:], x1[:1], x2[1:])
 
     nn = x1
-    n1 = np.tile(nn, (8, 1))
-    n2 = np.repeat(nn, 8, axis=0)
-    tt = int(n_layers * 6 / 7)
+    n1 = np.tile(nn, (batch_size, 1))
+    n2 = np.repeat(nn, batch_size, axis=0)
+    tt = int(n_layers // 2)
 
     p1 = [n1] * tt
     p2 = [n2] * (n_layers - tt)
 
     latent = p1 + [] + p2
-    res2 = np.repeat(x2, 8, axis=0)
-    model.generateTruncated(latent, noi=res2, outImage=True, avg=False, trunc=0.0)
+    res2 = np.repeat(x2, batch_size, axis=0)
+    model.generateTruncated(latent, noi=res2, outImage=True, avg=False, trunc=0.0, rim=2)
+    model.generateTruncated(latent, noi=res2, outImage=True, avg=True, trunc=0.0, num=1, rim=2)
+    model.generateTruncated(latent, noi=res2, outImage=True, avg=True, trunc=0.5, num=2, rim=2)
