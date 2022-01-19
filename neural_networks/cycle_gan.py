@@ -1,3 +1,4 @@
+import math
 from datetime import datetime
 
 import keras.backend as K
@@ -26,8 +27,15 @@ batch_size = 2
 # Loss function for evaluating adversarial loss
 adv_loss_fn = keras.losses.MeanSquaredError()
 
-imageA_path = "../datasets/cycle/mask"
-imageB_path = "../datasets/cycle/imgs"
+ones = tf.ones(batch_size)
+zeros = tf.zeros(batch_size)
+
+imageA_path = "../datasets/cycle/sem_to_sem/imgsA"
+imageB_path = "../datasets/cycle/sem_to_sem/imgsB"
+
+
+# imageA_path = "../datasets/cycle/mask"
+# imageB_path = "../datasets/cycle/imgs"
 
 
 def residual_block(x, activation, kernel_initializer=kernel_init, kernel_size=(3, 3), strides=(1, 1), padding="valid",
@@ -176,7 +184,6 @@ class CycleGan(keras.Model):
 
     # override
     def train_step(self, batch_data):
-        # x is Horse and y is zebra
         real_x, real_y = batch_data
 
         # For CycleGAN, we need to calculate different
@@ -241,8 +248,10 @@ class CycleGan(keras.Model):
             total_loss_F = gen_F_loss + cycle_loss_F + id_loss_F
 
             # Discriminator loss
-            disc_X_loss = self.discriminator_loss_fn(disc_real_x, disc_fake_x)
-            disc_Y_loss = self.discriminator_loss_fn(disc_real_y, disc_fake_y)
+            disc_X_loss = self.discriminator_loss_fn(disc_real_x, disc_fake_x) + wasserstein_loss(disc_real_x,
+                                                                                                  disc_fake_x)/100
+            disc_Y_loss = self.discriminator_loss_fn(disc_real_y, disc_fake_y) + wasserstein_loss(disc_real_y,
+                                                                                                  disc_fake_y)/100
 
         # Get the gradients for the generators
         grads_G = tape.gradient(total_loss_G, self.gen_G.trainable_variables)
@@ -276,6 +285,53 @@ class CycleGan(keras.Model):
             "D_X_loss": disc_X_loss,
             "D_Y_loss": disc_Y_loss,
         }
+
+    # def test_step(self, batch_data):
+    #     real_x, real_y = batch_data
+    #
+    #     fake_y = self.gen_G(real_x, training=False)
+    #     fake_x = self.gen_F(real_y, training=False)
+    #
+    #     cycled_x = self.gen_F(fake_y, training=False)
+    #     cycled_y = self.gen_G(fake_x, training=False)
+    #
+    #     same_x = self.gen_F(real_x, training=False)
+    #     same_y = self.gen_G(real_y, training=False)
+    #
+    #     disc_real_x = self.disc_X(real_x, training=False)
+    #     disc_fake_x = self.disc_X(fake_x, training=False)
+    #
+    #     disc_real_y = self.disc_Y(real_y, training=False)
+    #     disc_fake_y = self.disc_Y(fake_y, training=False)
+    #
+    #     # Generator adverserial loss
+    #     gen_G_loss = self.generator_loss_fn(disc_fake_y)
+    #     gen_F_loss = self.generator_loss_fn(disc_fake_x)
+    #
+    #     # Generator cycle loss
+    #     cycle_loss_G = self.cycle_loss_fn(real_y, cycled_y) * self.lambda_cycle
+    #     cycle_loss_F = self.cycle_loss_fn(real_x, cycled_x) * self.lambda_cycle
+    #
+    #     # Generator identity loss
+    #     id_loss_G = (self.identity_loss_fn(real_y, same_y) * self.lambda_cycle * self.lambda_identity)
+    #     id_loss_F = (self.identity_loss_fn(real_x, same_x) * self.lambda_cycle * self.lambda_identity)
+    #
+    #     # Total generator loss
+    #     total_loss_G = gen_G_loss + cycle_loss_G + id_loss_G
+    #     total_loss_F = gen_F_loss + cycle_loss_F + id_loss_F
+    #
+    #     # Discriminator loss
+    #     disc_X_loss = self.discriminator_loss_fn(disc_real_x, disc_fake_x)
+    #     disc_Y_loss = self.discriminator_loss_fn(disc_real_y, disc_fake_y)
+    #
+    #     acc = (pixel_distance(real_x, cycled_x) + pixel_distance(real_y, cycled_y)) / 2
+    #     return {
+    #         "val_acc": acc,
+    #         "val_G_loss": total_loss_G,
+    #         "val_F_loss": total_loss_F,
+    #         "val_D_X_loss": disc_X_loss,
+    #         "val_D_Y_loss": disc_Y_loss,
+    #     }
 
     def save(self, name, **kwargs):
         self.gen_G.save(name + "/gen_G.h5")
@@ -352,13 +408,17 @@ def discriminator_loss_fn(real, fake):
     return (real_loss + fake_loss) * 0.5
 
 
+def wasserstein_loss(real, fake):
+    return (tf.reduce_sum(real * ones) + tf.reduce_sum(fake * zeros)) / batch_size / 2
+
+
 def load_dataset(mask_dir, data_dir, subset=None):
     aug = AugmentationUtils() \
         .rescale(stdNorm=True) \
         .horizontal_flip() \
         .vertical_flip() \
         .ninty_rotation() \
-        .validation_split()
+        .validation_split(0.1)
     genA = aug.create_generator(mask_dir,
                                 target_size=orig_img_size,
                                 batch_size=batch_size,
@@ -366,14 +426,15 @@ def load_dataset(mask_dir, data_dir, subset=None):
                                 class_mode=None,
                                 subset=subset)
 
+    # .add_median_blur() \
+    # .add_gaussian_blur() \
+
     aug = AugmentationUtils() \
         .rescale(stdNorm=True) \
-        .add_median_blur() \
-        .add_gaussian_blur() \
         .horizontal_flip() \
         .vertical_flip() \
         .ninty_rotation() \
-        .validation_split()
+        .validation_split(0.1)
     genB = aug.create_generator(data_dir,
                                 target_size=orig_img_size,
                                 batch_size=batch_size,
@@ -426,7 +487,7 @@ def train(cycle_gan_model, train_dataset, test_dataset, weight_file=""):
                                                                 monitor='acc', mode='min', save_weights_only=True)
     t = len(train_dataset)
     v = len(test_dataset)
-    history = cycle_gan_model.fit(train_dataset, steps_per_epoch=t, epochs=20, validation_data=test_dataset,
+    history = cycle_gan_model.fit(train_dataset, steps_per_epoch=t, epochs=100, validation_data=test_dataset,
                                   validation_steps=v,
                                   callbacks=[plotter, model_checkpoint_callback])
     plot_graphs(history.history)
@@ -481,14 +542,32 @@ def check2(cycle_gan_model, test_B):
     save_images(np.asarray(res), '../results/cycle_result/test_images2/', stdNorm=True)
 
 
-mode_test = True
+def generate_for_layer(cycle_gan_model, image_path, atob=True):
+    image = std_norm_x(read_image(image_path))
+    weight_file = "../models/cycleGAN/model011721:08"
+    cycle_gan_model.load_weights(weight_file)
+    images, _, _ = split_image(image, height, step=128)
+    images = np.asarray(images)
+    if atob:
+        predictions = cycle_gan_model.gen_G(images, training=False)
+    else:
+        predictions = cycle_gan_model.gen_F(images, training=False)
+    predictions = np.asarray(predictions)
+    predictions = np.reshape(predictions, predictions.shape[:-1])
+    unionTestImages(images, predictions, path="../results/cycle_result/test_images3/")
+    # k = int(math.sqrt(len(predictions)))
+    # res = unionImage(predictions, k, k)
+    # save_images(np.asarray(res), '../results/cycle_result/test_images3/', stdNorm=True)
+
+
+mode_test = False
 if __name__ == '__main__':
     model = get_cycleGAN()
     train_A, train_B = load_dataset(imageA_path, imageB_path, subset='training')
     val_A, val_B = load_dataset(imageA_path, imageB_path, subset='validation')
     if mode_test:
-        check2(model, val_B)
-        check(model, val_A)
-        # test(model, val_A)
+        # check2(model, val_B)
+        # check(model, val_A)
+        generate_for_layer(model, "../datasets/cycle/test/cy2_m1_0518.jpg", atob=False)
     else:
         train(model, UnionGenerator([train_A, train_B], batch_size), UnionGenerator([val_A, val_B], batch_size))

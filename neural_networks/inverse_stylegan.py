@@ -212,6 +212,7 @@ if __name__ == "__main__":
 
     encoder = UnionEncoder(model)
     x1, x2 = encoder.encode_images(gen)
+    #np.save(output + 'best.npy', best_latent)
     save_images(x2, image_dir)
     images = encoder.transform(x1, x2)
     save_images(images, image_dir)

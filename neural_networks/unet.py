@@ -118,7 +118,7 @@ if __name__ == '__main__':
     train_generator = UnionGenerator([img_generator, mask_generator], batch_size).reflect_rotate()
     val_generator = UnionGenerator([img_generator2, mask_generator2], batch_size).reflect_rotate()
 
-    test_generator("../results/test/train", train_generator)
+    test_generator("../results/test", train_generator)
     # test_generator("../results/test/val", val_generator)
 
     # Build model

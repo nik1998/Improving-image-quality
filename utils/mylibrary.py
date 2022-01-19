@@ -103,7 +103,7 @@ def showImage(image):
     plt.show()
 
 
-def unionTestImages(act, predict, hsize=5, wsize=10, path="unionTest/", stdNorm=True):
+def unionTestImages(act, predict, hsize=5, wsize=10, path="../results/unionTest/", stdNorm=True):
     conImages = []
     total = act.shape[0] - act.shape[0] % (wsize * hsize)
     for i in range(0, total, wsize * hsize):

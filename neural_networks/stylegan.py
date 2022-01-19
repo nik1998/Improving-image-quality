@@ -12,6 +12,7 @@ import numpy as np
 import time
 
 im_size = 256
+im_channel = 1
 latent_size = 512
 BATCH_SIZE = 8
 
@@ -42,14 +43,12 @@ def nImage(n):
 
 
 # Loss functions
+# (weight / 2) * ||grad||^2
 def gradient_penalty(samples, output, weight):
     gradients = K.gradients(output, samples)[0]
     gradients_sqr = K.square(gradients)
     gradient_penalty = K.sum(gradients_sqr,
                              axis=np.arange(1, len(gradients_sqr.shape)))
-
-    # (weight / 2) * ||grad||^2
-    # Penalize the gradient norm
     return K.mean(gradient_penalty) * weight
 
 
@@ -124,17 +123,8 @@ def d_block(inp, fil, p=True):
 
 def to_rgb(inp, style):
     size = inp.shape[2]
-    x = Conv2DMod(3, 1, kernel_initializer=VarianceScaling(200 / size), demod=False)([inp, style])
+    x = Conv2DMod(im_channel, 1, kernel_initializer=VarianceScaling(200 / size), demod=False)([inp, style])
     return Lambda(upsample_to_size, output_shape=[None, im_size, im_size, None])(x)
-
-
-def from_rgb(inp, conc=None):
-    fil = int(im_size * 4 / inp.shape[2])
-    z = AveragePooling2D()(inp)
-    x = Conv2D(fil, 1, kernel_initializer='he_uniform')(z)
-    if conc is not None:
-        x = concatenate([x, conc])
-    return x, z
 
 
 class GAN(object):
@@ -148,9 +138,6 @@ class GAN(object):
 
         self.GE = None
         self.SE = None
-
-        self.DM = None
-        self.AM = None
 
         # Config
         self.LR = lr
@@ -175,7 +162,7 @@ class GAN(object):
         if self.D:
             return self.D
 
-        inp = Input(shape=[im_size, im_size, 3])
+        inp = Input(shape=[im_size, im_size, im_channel])
 
         x = d_block(inp, 1 * cha)  # 128
 
@@ -508,7 +495,7 @@ class StyleGAN(object):
 
         concat_clip_save(generated_images, "../results/styleGAN/i" + str(num) + "-mr.png", 8)
 
-    def generateTruncated(self, style, noi=None, trunc=0.5, outImage=False, avg=False, num=0):
+    def generateTruncated(self, style, noi=None, trunc=0.5, outImage=False, avg=False, num=0, rim=8):
 
         if avg:
             av = np.mean(self.GAN.S.predict(noise(2000), batch_size=64), axis=0, keepdims=True)
@@ -526,7 +513,7 @@ class StyleGAN(object):
         generated_images = self.GAN.GE.predict(w_space + [noi], batch_size=BATCH_SIZE)
 
         if outImage:
-            concat_clip_save(generated_images, "../results/styleGAN/t" + str(num) + ".png", 8)
+            concat_clip_save(generated_images, "../results/styleGAN/t" + str(num) + ".png", rim)
 
         return generated_images
 
@@ -579,11 +566,11 @@ if __name__ == "__main__":
     gen = aug.create_generator("../datasets/final_good_images",
                                target_size=(im_size, im_size),
                                batch_size=BATCH_SIZE,
-                               color_mode='rgb',
+                               color_mode='grayscale',
                                class_mode=None)
 
-    model = StyleGAN(gen, lr=0.0001, silent=False)
-    # model.load(1)
+    model = StyleGAN(gen, steps=56000, lr=0.0001, silent=False)
+    model.load(5)
     model.evaluate(0)
 
     while model.GAN.steps <= 200000:

@@ -38,14 +38,13 @@ class Conv2DMod(Layer):
         self.activity_regularizer = regularizers.get(activity_regularizer)
         self.kernel_constraint = constraints.get(kernel_constraint)
         self.demod = demod
-        self.input_spec = [InputSpec(ndim = 4),
-                            InputSpec(ndim = 2)]
+        self.input_spec = [InputSpec(ndim=4),
+                           InputSpec(ndim=2)]
 
     def build(self, input_shape):
         channel_axis = -1
         if input_shape[0][channel_axis] is None:
-            raise ValueError('The channel dimension of the inputs '
-                             'should be defined. Found `None`.')
+            raise ValueError('The channel dimension of the inputs should be defined. Found `None`.')
         input_dim = input_shape[0][channel_axis]
         kernel_shape = self.kernel_size + (input_dim, self.filters)
 
@@ -60,40 +59,42 @@ class Conv2DMod(Layer):
 
         # Set input spec.
         self.input_spec = [InputSpec(ndim=4, axes={channel_axis: input_dim}),
-                            InputSpec(ndim=2)]
+                           InputSpec(ndim=2)]
         self.built = True
 
-    def call(self, inputs):
+    def call(self, inputs, **kwargs):
 
-        #To channels last
+        # To channels last
         x = tf.transpose(inputs[0], [0, 3, 1, 2])
 
-        #Get weight and bias modulations
-        #Make sure w's shape is compatible with self.kernel
-        w = K.expand_dims(K.expand_dims(K.expand_dims(inputs[1], axis = 1), axis = 1), axis = -1)
+        # Get weight and bias modulations
+        # Make sure w's shape is compatible with self.kernel
+        w = K.expand_dims(K.expand_dims(K.expand_dims(inputs[1], axis=1), axis=1), axis=-1)
 
-        #Add minibatch layer to weights
-        wo = K.expand_dims(self.kernel, axis = 0)
+        # Add minibatch layer to weights
+        wo = K.expand_dims(self.kernel, axis=0)
 
-        #Modulate
-        weights = wo * (w+1)
+        # Modulate
+        weights = wo * (w + 1)
 
-        #Demodulate
+        # Demodulate
         if self.demod:
-            d = K.sqrt(K.sum(K.square(weights), axis=[1,2,3], keepdims = True) + 1e-8)
+            d = K.sqrt(K.sum(K.square(weights), axis=[1, 2, 3], keepdims=True) + 1e-8)
             weights = weights / d
 
-        #Reshape/scale input
-        x = tf.reshape(x, [1, -1, x.shape[2], x.shape[3]]) # Fused => reshape minibatch to convolution groups.
-        w = tf.reshape(tf.transpose(weights, [1, 2, 3, 0, 4]), [weights.shape[1], weights.shape[2], weights.shape[3], -1])
+        # Reshape/scale input
+        x = tf.reshape(x, [1, -1, x.shape[2], x.shape[3]])  # Fused => reshape minibatch to convolution groups.
+        w = tf.reshape(tf.transpose(weights, [1, 2, 3, 0, 4]),
+                       [weights.shape[1], weights.shape[2], weights.shape[3], -1])
 
         x = tf.nn.conv2d(x, w,
-                strides=self.strides,
-                padding="SAME",
-                data_format="NCHW")
+                         strides=self.strides,
+                         padding="SAME",
+                         data_format="NCHW")
 
         # Reshape/scale output.
-        x = tf.reshape(x, [-1, self.filters, x.shape[2], x.shape[3]]) # Fused => reshape convolution groups back to minibatch.
+        x = tf.reshape(x, [-1, self.filters, x.shape[2],
+                           x.shape[3]])  # Fused => reshape convolution groups back to minibatch.
         x = tf.transpose(x, [0, 2, 3, 1])
 
         return x

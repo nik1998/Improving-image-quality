@@ -1,3 +1,4 @@
+import numpy as np
 from scipy.stats import norm
 from skimage.feature import hessian_matrix, hessian_matrix_eigvals
 
@@ -157,20 +158,6 @@ def morph_repair():
                 255 * np.concatenate((operate_binarization(img), operate_binarization(res)), axis=1))
 
 
-def adaptive1():
-    fn = 'train_images/img302.png'
-    img = read_image(fn, 128, 128)
-    showImage(img)
-    # img = unsharp_masking(img, 3)
-    img = adaptive_median(img, threshold=1.0)
-    showImage(img)
-    ans = adaptive_binarization_bredly(img)
-    # ans = adaptive_binarization_otcy(img)
-    showImage(ans)
-    ans = square_bin_filter(ans, dsize=6, min_square=20)
-    showImage(ans)
-
-
 def experiments():
     fn = 'train_images/img302.png'
     img = read_image(fn, 128, 128)
@@ -203,8 +190,8 @@ def plot_images(*images):
 
 
 def canny_with_morph():
-    fn = 'train_images/img302.png'
-    img = read_image(fn, 128, 128)
+    fn = 'datasets/one_layer_images/one_cadr/1129 (1).jpg'
+    img = read_image(fn)
     showImage(img)
     ans = canny.detect(img * 255)
     se = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
@@ -223,23 +210,25 @@ def ridge_detector_test():
     showImage(img)
     ans = ridge_detector(img)
     showImage(ans)
-    cv2.imwrite("ridgedetector.png", ans * 255)
+    # cv2.imwrite("ridgedetector.png", ans * 255)
 
 
 def image_complex_bin(img):
-    ans = (operate_binarization(img, False) + operate_square_filter(img, False))
-    cnt = 0
-    su = 0
-    for i in range(128):
-        for j in range(128):
-            if 1 > ans[i][j] > 0:
-                cnt += 1
-                su += ans[i][j]
-    if cnt == 0:
-        cnt += 1
-    ans = (ans > su / cnt).astype(np.float)
+    sq = operate_square_filter(img, False)
+    cv2.imwrite("results/binary/sq.png", sq * 255)
+    dsq = operate_square_filter(sq, False)
+    cv2.imwrite("results/binary/dsq.png", dsq * 255)
+    bin = operate_binarization(img, False)
+    cv2.imwrite("results/binary/bin.png", bin * 255)
+    ans = bin + sq
+    cv2.imwrite("results/binary/ans.png", ans * 255)
+
+    ans = (ans > 0).astype(np.float)
+    cv2.imwrite("results/binary/meanans.png", ans * 255)
     se = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
     ans = cv2.morphologyEx(ans, cv2.MORPH_OPEN, se)
+    cv2.imwrite("results/binary/morphans.png", ans * 255)
+    cv2.imwrite("results/binary/concat.png", ans * img * 255)
     return ans
 
 
@@ -248,13 +237,65 @@ def get_dataset():
     prepare_dataset('datasets/balanced_images', 'datasets/final_good_images/train/', 256, step=256, drop=0)
 
 
+def get_dataset2():
+    # prepare_dataset('/home/nik/images/', 'datasets/global_images/', 256, step=256, drop=0.9)
+    prepare_dataset('datasets/one_layer_images/want_to_split', 'datasets/cycle/sem_to_sem/imgsA/train', 128, step=128,
+                    drop=0)
+    prepare_dataset('datasets/one_layer_images/want_to_split2', 'datasets/cycle/sem_to_sem/imgsB/train', 128, step=128,
+                    drop=0)
+
+
+def adaptive1_bad():
+    fn = 'datasets/one_layer_images/one_cadr/1129 (1).jpg'
+    img = read_image(fn)
+    img = cv2.medianBlur(img, 5)
+    img = cv2.GaussianBlur(img, (0, 0), 1)
+    showImage(img)
+    # img = unsharp_masking(img, 3)
+    # img = adaptive_median(img, threshold=1.0)
+    # showImage(img)
+    # ans = adaptive_binarization_bredly(img)
+    ans = adaptive_binarization_otcy(img)
+    # showImage(ans)
+    # ans = square_bin_filter(img, dsize=6, min_square=20)
+    im2 = np.clip(img + ans, 0.0, 1.0)
+    sx = sobel_x(im2)
+    cv2.imwrite("results/binary/sobel.png", sx * 255)
+    sx = np.logical_and(0.1 < sx, sx < 0.15)
+    sx = cv2.medianBlur(sx.astype(np.float32), 3)
+    sx = cv2.medianBlur(sx, 3)
+    cv2.imwrite("results/binary/sobel2.png", sx * 255)
+    cv2.imwrite("results/binary/sobel3.png", np.clip(sx * 0.5 + ans, 0.0, 1.0) * 255)
+
+
+def brute_threshold():
+    fn = 'datasets/one_layer_images/one_cadr/cy2_m1_0435.jpg'
+    img = read_image(fn)
+    img = cv2.medianBlur(img, 5)
+    img = cv2.GaussianBlur(img, (0, 0), 1)
+    images = []
+    for i in range(0, 256, 1):
+        images.append(img >= i / 256)
+    save_images(np.asarray(images), "results/binary/brute_threshold")
+
+
+def simple_threshold(img):
+    img = cv2.medianBlur(img, 5)
+    img = cv2.GaussianBlur(img, (0, 0), 1)
+    ans = img >= 90 / 256
+    se = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    ans = cv2.morphologyEx(ans.astype(np.float32), cv2.MORPH_OPEN, se)
+    return ans
+
+
 if __name__ == '__main__':
-    # img = read_dir('train_images/', 128, 128)
-    # for i in tqdm(range(len(img))):
-    # img[i] = image_complex_bin(img[i])
-    # save_images(img, 'all_bin_images/')
     # recursive_read_operate_save('train_images/', 'all_bin_images/', image_complex_bin, False)
     # copy_from_labels("unet/bin_images", "train_images", "unet/real_images")
-    # image_path = "unet/images"
-    # ridge_detector_test()
-    get_dataset()
+    # get_dataset2()
+    # brute_threshold()
+    # recursive_read_operate_save('datasets/one_layer_images/one_cadr', 'results/binary', simple_threshold, False)
+
+    recursive_read_operate_save('datasets/cycle/sem_to_sem/imgsA/train', 'datasets/one_layer_images/splited1/train', simple_threshold, False)
+
+    #prepare_dataset('datasets/one_layer_images/want_to_split_bin', 'datasets/one_layer_images/splited1/train', 256,
+                    #step=256, drop=0)
