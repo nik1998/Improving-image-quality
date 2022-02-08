@@ -72,10 +72,9 @@ if __name__ == '__main__':
         add_defect_expansion_algorithm().add_salt_paper()
 
     train_generator2 = aug.create_generator("../datasets/real/train/", seed=seed)
-    train_generator = UnionGenerator([train_generator, train_generator2], batch_size=batch_size)
+    train_generator = UnionGenerator([train_generator, train_generator2])
     validation_generator2 = aug.create_generator("../datasets/real/val/", seed=seed)
-    validation_generator = UnionGenerator([validation_generator, validation_generator2],
-                                          batch_size=batch_size)
+    validation_generator = UnionGenerator([validation_generator, validation_generator2])
     test_generator("../results/test", train_generator)
     test_generator("../results/test", validation_generator)
 

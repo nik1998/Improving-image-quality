@@ -1,11 +1,10 @@
-import numpy as np
 from scipy.stats import norm
 from skimage.feature import hessian_matrix, hessian_matrix_eigvals
 
+from neural_networks.unet import *
 from utils import canny_edge_detector as canny
 from utils.regression import *
-from neural_networks.unet import *
-
+import utils.mylibrary as lib
 
 def test_filters():
     width = 128
@@ -239,10 +238,10 @@ def get_dataset():
 
 def get_dataset2():
     # prepare_dataset('/home/nik/images/', 'datasets/global_images/', 256, step=256, drop=0.9)
-    prepare_dataset('datasets/one_layer_images/want_to_split', 'datasets/cycle/sem_to_sem/imgsA/train', 128, step=128,
-                    drop=0)
-    prepare_dataset('datasets/one_layer_images/want_to_split2', 'datasets/cycle/sem_to_sem/imgsB/train', 128, step=128,
-                    drop=0)
+    prepare_dataset('datasets/one_layer_images/want_to_split', 'datasets/cycle/sem_to_sem256/imgsA/train', 256,
+                    step=64, drop=0.5)
+    prepare_dataset('datasets/one_layer_images/want_to_split2', 'datasets/cycle/sem_to_sem256/imgsB/train', 256,
+                    step=64, drop=0.5)
 
 
 def adaptive1_bad():
@@ -288,14 +287,59 @@ def simple_threshold(img):
     return ans
 
 
+def check_sem():
+    dir_name1 = "datasets/unet/want_to_split/real"
+    dir1 = sorted(os.listdir(dir_name1))[200:]
+    imgs1 = []
+    for l in dir1:
+        im = read_image(os.path.join(dir_name1, l))
+        if im.shape[0] == 4000:
+            imgs, _, _ = split_image(im, 2000, 2000)
+            imgs1.extend(imgs)
+        else:
+            imgs1.append(im)
+    dir_name2 = "datasets/unet/want_to_split/clear_masks"
+    dir2 = sorted(os.listdir(dir_name2))[200:]
+    imgs2 = []
+    for l in dir2:
+        im = read_image(os.path.join(dir_name2, l))
+        if im.shape[0] == 4000:
+            imgs, _, _ = split_image(im, 2000, 2000)
+            imgs2.extend(imgs)
+        else:
+            imgs2.append(im)
+    # dir2 = [st.split('[')[0][:-6] + st.split('[')[-1][-4:] for st in dir2]
+    # save_images(imgs2, "datasets/unet/want_to_split/clear_masks", imageNames=dir2)
+    for i in range(len(imgs1)):
+        imgs1[i] = np.concatenate([imgs1[i], imgs2[i]])
+        # print(dir1[i][:-4], dir2[i][:-4])
+    save_images(imgs1, "results/test", )
+
+
+def create_unet_dataset():
+    prepare_dataset("datasets/unet/want_to_split/real", 'datasets/unet/all_real_images/train/', 256, step=256, drop=0,
+                    determined=True)
+    lib.inn = 0
+    prepare_dataset("datasets/unet/want_to_split/clear_masks", 'datasets/unet/all_mask_images/train/', 256, step=256,
+                    drop=0,
+                    determined=True)
+    train_generator, val_generator = create_image_to_image_dataset(
+        ['datasets/unet/all_real_images', 'datasets/unet/all_mask_images'], im_size=256)
+    test_generator("results/test", train_generator, 200)
+    test_generator("results/test", val_generator, 200)
+
+
 if __name__ == '__main__':
     # recursive_read_operate_save('train_images/', 'all_bin_images/', image_complex_bin, False)
     # copy_from_labels("unet/bin_images", "train_images", "unet/real_images")
-    # get_dataset2()
-    # brute_threshold()
+    # test_real_frame('models/rednet/model020122:19.h5', "scan_images/", stdNorm=False, interpolate=True)
     # recursive_read_operate_save('datasets/one_layer_images/one_cadr', 'results/binary', simple_threshold, False)
 
-    recursive_read_operate_save('datasets/cycle/sem_to_sem/imgsA/train', 'datasets/one_layer_images/splited1/train', simple_threshold, False)
+    # recursive_read_operate_save('datasets/cycle/sem_to_sem/imgsA/train', 'datasets/one_layer_images/splited1/train', simple_threshold, False)
 
-    #prepare_dataset('datasets/one_layer_images/want_to_split_bin', 'datasets/one_layer_images/splited1/train', 256,
-                    #step=256, drop=0)
+    # prepare_dataset('datasets/one_layer_images/want_to_split_bin', 'datasets/one_layer_images/splited1/train', 256, step=256, drop=0)
+    train_generator, val_generator = create_image_to_image_dataset(
+        ['datasets/unet/all_real_images', 'datasets/unet/all_mask_images'], im_size=256)
+    test_generator("results/test", train_generator, 200)
+    test_generator("results/test", val_generator, 200)
+    pass

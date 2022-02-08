@@ -291,14 +291,15 @@ if __name__ == "__main__":
                                                      target_size=orig_img_size,
                                                      batch_size=batch_size)
 
-    train_generator = UnionGenerator([train_style, train_content], batch_size)
-    val_generator = UnionGenerator([val_style, val_content], batch_size)
+    train_generator = UnionGenerator([train_style, train_content])
+    val_generator = UnionGenerator([val_style, val_content])
     test_generator("../results/test", train_generator)
 
     optimizer = keras.optimizers.Adam(learning_rate=lr)
     loss_fn = keras.losses.MeanSquaredError()
 
     encoder = get_encoder()
+    get_encoder().summary()
     loss_net = get_style_vgg()
     decoder = get_decoder()
 
@@ -325,6 +326,6 @@ if __name__ == "__main__":
     model = keras.models.load_model("../models/adain/1511w4notblur150e.h5")
     # model.save('../models/adain/' + now + '.h5')
 
-    images = get_gen_images(val_generator, 2)
+    images = get_gen_images(val_generator)
     style_images = model.predict(images)
     unionTestImages(images[0], style_images, path="../results/style/adain")

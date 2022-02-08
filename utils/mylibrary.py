@@ -1,5 +1,4 @@
 import os
-import random
 import shutil
 import string
 import sys
@@ -40,17 +39,22 @@ def split_image(image, x, step=128):
     return small_array, h, w
 
 
-def prepare_dataset(image_path, output_path, imsize, step=128, drop=0.5, inmemory=False):
+def prepare_dataset(image_path, output_path, imsize, step=128, drop=0.5, inmemory=False, determined=False):
     print(image_path)
-    for dr in os.listdir(image_path):
+    dir = os.listdir(image_path)
+    if determined:
+        dir = sorted(dir)
+    for dr in dir:
         abs_path = os.path.join(image_path, dr)
         if os.path.isdir(abs_path):
             prepare_dataset(abs_path, output_path, imsize, step, drop, inmemory)
-        elif 'jpg' == dr[-3:] or 'bmp' == dr[-3:]:
+        elif 'jpg' == dr[-3:] or 'bmp' == dr[-3:] or 'png' == dr[-3:]:
             print('Add file:' + abs_path)
             img = read_image(abs_path)
             ar, _, _ = split_image(img, imsize, step)
-            images = shuffle(np.asarray(ar))
+            images = np.asarray(ar)
+            if not determined:
+                images = shuffle(images)
             d = len(images)
             images = images[int(drop * d):]
             save_images(images, output_path)
@@ -97,9 +101,9 @@ def read_dir(imagePath, height, width, sort=False, gray=True):
     return np.asarray(dir_images)
 
 
-def showImage(image):
+def showImage(image, cmap='gray', vmin=0.0, vmax=1.0):
     plt.figure()
-    plt.imshow(image, cmap='gray', vmin=0.0, vmax=1.0)
+    plt.imshow(image, cmap=cmap, vmin=vmin, vmax=vmax)
     plt.show()
 
 
@@ -175,7 +179,7 @@ def concat_clip_save(images, savepath, rowcount):
         r.append(np.concatenate(images[i:i + rowcount], axis=1))
 
     c1 = np.concatenate(r, axis=0)
-    c1 = np.clip(c1, 0.0, 1.0)
+    c1 = np.clip(c1, 0.0, 1.0).astype(np.float32)
     cv2.imwrite(savepath, c1 * 255)
 
 

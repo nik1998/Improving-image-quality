@@ -2,9 +2,9 @@ from utils.img_filters import *
 import random
 
 
-def apply_noise(im, negative=True):
+def apply_noise(im, stdNorm=True):
     image = np.reshape(im, im.shape[:-1])
-    if negative:
+    if stdNorm:
         image = std_norm_reverse(image)
     rnd = random.Random()
     j = rnd.randint(0, 3)
@@ -17,7 +17,7 @@ def apply_noise(im, negative=True):
     elif j == 3:
         image = noisy_with_defaults(image, "light_side")
     image = np.clip(image, 0.0, 1.0)
-    if negative:
+    if stdNorm:
         image = std_norm_x(image)
     return np.expand_dims(image, axis=-1)
 
@@ -35,32 +35,40 @@ def noisy_with_defaults(image, noise_typ):
         return big_own_defect(image, count, hl=5, hr=15, wl=5, wr=15)
 
 
-def gauss_noise(image, mean, var):
+def gauss_noise(image, mean, var, p=1.0):
     rnd = random.Random()
     rnd = np.random.default_rng(rnd.randint(0, 2 ** 30))
+    pr = rnd.uniform(0.0, 1.0)
+    if pr > p:
+        return image
     sigma = var ** 0.5
     gauss = rnd.normal(mean, sigma, image.shape)
     noisy = image + gauss
     return noisy
 
 
-def salt_paper(image, s_vs_p, amount):
+def salt_paper(image, s_vs_p, amount, p=1.0):
     rnd = random.Random()
-    # Salt mode
+    pr = rnd.uniform(0.0, 1.0)
+    if pr > p:
+        return image
     num_salt = np.ceil(amount * image.size * s_vs_p)
-    coords = [[rnd.randint(0, i - 1) for c in range(int(num_salt))]
+    coords = [[rnd.randint(0, i - 1) for _ in range(int(num_salt))]
               for i in image.shape]
     image[tuple(coords)] = 1
     # Pepper mode
     num_pepper = np.ceil(amount * image.size * (1. - s_vs_p))
-    coords = [[rnd.randint(0, i - 1) for c in range(int(num_pepper))]
+    coords = [[rnd.randint(0, i - 1) for _ in range(int(num_pepper))]
               for i in image.shape]
     image[tuple(coords)] = 0
     return image
 
 
-def light_side(image, coeff, exponential=False):
+def light_side(image, coeff, exponential=False, p=1.0):
     rnd = random.Random()
+    pr = rnd.uniform(0.0, 1.0)
+    if pr > p:
+        return image
     h, w, _ = image.shape
     grim = np.expand_dims(np.mgrid[0:h, 0:w].astype(np.float)[0], axis=-1)
     if exponential:
@@ -81,9 +89,12 @@ def light_side(image, coeff, exponential=False):
     return np.clip(im, 0.0, 1.0)
 
 
-def big_own_defect(image, count, hl=5, hr=15, wl=5, wr=15):
+def big_own_defect(image, count, hl=5, hr=15, wl=5, wr=15, p=1.0):
     rnd = random.Random()
     rnd2 = np.random.default_rng(rnd.randint(0, 2 ** 30))
+    pr = rnd.uniform(0.0, 1.0)
+    if pr > p:
+        return image
     mean = np.mean(image)
     for i in range(count):
         h = rnd.randint(hl, hr)
@@ -113,8 +124,11 @@ def big_own_defect(image, count, hl=5, hr=15, wl=5, wr=15):
     return np.clip(image, 0.0, 1.0)
 
 
-def expansion_algorithm(image, count, sizel=10, sizer=50, gauss=True):
+def expansion_algorithm(image, count, sizel=10, sizer=50, gauss=True, p=1.0):
     rnd = random.Random()
+    pr = rnd.uniform(0.0, 1.0)
+    if pr > p:
+        return image
     h, w, _ = image.shape
     z = np.zeros(image.shape, dtype=np.float)
     for _ in range(count):
@@ -145,8 +159,11 @@ def expansion_algorithm(image, count, sizel=10, sizer=50, gauss=True):
     return np.clip(image, 0.0, 1.0)
 
 
-def big_light_hole(img, count=3, hl=10, hr=30, wl=10, wr=30):
+def big_light_hole(img, count=3, hl=10, hr=30, wl=10, wr=30, p=1.0):
     rnd = random.Random()
+    pr = rnd.uniform(0.0, 1.0)
+    if pr > p:
+        return img
     image = img.copy()
     mean = np.mean(image)
     delta = 0.1

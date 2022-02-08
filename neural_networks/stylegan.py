@@ -5,8 +5,8 @@ from tensorflow.keras.models import *
 from tensorflow.keras.optimizers import *
 
 from utils.conv_mod import *
-from utils.mykeras_utils import AugmentationUtils, test_generator
-from utils.mylibrary import concat_clip_save, save_images
+from utils.mykeras_utils import AugmentationUtils
+from utils.mylibrary import concat_clip_save
 from random import random
 import numpy as np
 import time
@@ -569,8 +569,8 @@ if __name__ == "__main__":
                                color_mode='grayscale',
                                class_mode=None)
 
-    model = StyleGAN(gen, steps=56000, lr=0.0001, silent=False)
-    model.load(5)
+    model = StyleGAN(gen, lr=0.0001, silent=False)
+    model.load(9)
     model.evaluate(0)
 
     while model.GAN.steps <= 200000:

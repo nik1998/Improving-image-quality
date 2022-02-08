@@ -1,10 +1,8 @@
-import tensorflow as tf
 from keras import backend as K
-from tensorflow.keras import layers
 
 from utils.mykeras_utils import *
 
-#os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+# os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 
 physical_devices = tf.config.list_physical_devices('GPU')
@@ -91,36 +89,20 @@ def f1_m(y_true, y_pred):
 
 if __name__ == '__main__':
     keras.backend.clear_session()
-    data_dir = "../datasets/unet/images"
-    mask_dir = "../datasets/unet/mask"
-    img_size = (128, 128)
+    data_dir = '../datasets/unet/all_real_images'
+    mask_dir = '../datasets/unet/all_mask_images'
+    img_size = (256, 256)
     num_classes = 1
     batch_size = 16
-    seed = random.randint(0, 2 ** 30)
 
-    aug = AugmentationUtils() \
-        .rescale() \
-        .add_median_blur() \
-        .add_gaussian_blur() \
-        .validation_split()
-    img_generator = aug.create_generator(data_dir, seed=seed, subset='training')
-    img_generator2 = aug.create_generator(data_dir, seed=seed, subset='validation')
+    train_generator, val_generator = create_image_to_image_dataset([data_dir, mask_dir],
+                                                                   aug_extension=[lambda
+                                                                                      aug: aug.add_median_blur().add_gaussian_blur()],
+                                                                   batch_size=batch_size,
+                                                                   im_size=img_size[0])
 
-    # print(check_not_interception(img_generator.filenames, img_generator2.filenames))
-
-    aug = AugmentationUtils() \
-        .rescale() \
-        .validation_split()
-
-    mask_generator = aug.create_generator(mask_dir, seed=seed, subset='training')
-    mask_generator2 = aug.create_generator(mask_dir, seed=seed, subset='validation')
-
-    train_generator = UnionGenerator([img_generator, mask_generator], batch_size).reflect_rotate()
-    val_generator = UnionGenerator([img_generator2, mask_generator2], batch_size).reflect_rotate()
-
-    test_generator("../results/test", train_generator)
-    # test_generator("../results/test/val", val_generator)
-
+    # test_generator("../results/test", train_generator, 500)
+    # test_generator("../results/test/val", val_generator, 500)
     # Build model
     model = get_unet_model(img_size, num_classes)
     # model.summary()

@@ -166,7 +166,7 @@ if __name__ == '__main__':
     noise_gen = aug.create_generator("../datasets/real/train/",
                                      batch_size=bz,
                                      target_size=(height, width), seed=seed)
-    training_generator = UnionGenerator([x_train, noise_gen], batch_size=bz).reflect_rotate()
+    training_generator = UnionGenerator([x_train, noise_gen]).ninty_rotate()
 
     test_generator("../results/test/", training_generator, stdNorm=True)
     # train_data_generator = train_datagen.flow(x=x_train, save_to_dir="aug_dataset2/", save_prefix='aug',

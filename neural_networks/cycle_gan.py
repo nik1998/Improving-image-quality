@@ -1,24 +1,19 @@
-import math
-from datetime import datetime
-
 import keras.backend as K
-import tensorflow as tf
 import tensorflow_addons as tfa
-from tensorflow import keras
-from tensorflow.keras import layers
 
 from utils.mykeras_utils import *
+from utils.presision_recall_gan import knn_precision_recall_features
 
 physical_devices = tf.config.list_physical_devices('GPU')
 tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
-height, width = 128, 128
+im_size = 256
 img_channel = 1
 # Define the standard image size.
-orig_img_size = (height, width)
+orig_img_size = (im_size, im_size)
 # Size of the random crops to be used during training.
-input_img_size = (height, width, img_channel)
-full_size = height * width * img_channel
+input_img_size = (im_size, im_size, img_channel)
+full_size = im_size * im_size * img_channel
 # Weights initializer for the layers.
 kernel_init = keras.initializers.RandomNormal(mean=0.0, stddev=0.02)
 # Gamma initializer for instance normalization.
@@ -30,12 +25,8 @@ adv_loss_fn = keras.losses.MeanSquaredError()
 ones = tf.ones(batch_size)
 zeros = tf.zeros(batch_size)
 
-imageA_path = "../datasets/cycle/sem_to_sem/imgsA"
-imageB_path = "../datasets/cycle/sem_to_sem/imgsB"
-
-
-# imageA_path = "../datasets/cycle/mask"
-# imageB_path = "../datasets/cycle/imgs"
+imageA_path = "../datasets/cycle/sem_to_sem256/imgsA"
+imageB_path = "../datasets/cycle/sem_to_sem256/imgsB"
 
 
 def residual_block(x, activation, kernel_initializer=kernel_init, kernel_size=(3, 3), strides=(1, 1), padding="valid",
@@ -81,15 +72,18 @@ def upsample(
         x,
         filters,
         activation,
-        kernel_size=(2, 2),
-        strides=(2, 2),
+        kernel_size=(3, 3),
+        strides=(1, 1),
         padding="same",
         kernel_initializer=kernel_init,
         gamma_initializer=gamma_init,
         use_bias=False,
 ):
-    x = layers.Conv2DTranspose(filters, kernel_size, strides=strides, padding=padding,
-                               kernel_initializer=kernel_initializer, use_bias=use_bias)(x)
+    x = layers.UpSampling2D(2)(x)
+    x = layers.Conv2D(filters, kernel_size, strides=strides, padding=padding,
+                      kernel_initializer=kernel_initializer, use_bias=use_bias)(x)
+    # x = layers.Conv2DTranspose(filters, kernel_size, strides=strides, padding=padding,
+    # kernel_initializer=kernel_initializer, use_bias=use_bias)(x)
     x = tfa.layers.InstanceNormalization(gamma_initializer=gamma_initializer)(x)
     if activation:
         x = activation(x)
@@ -158,22 +152,23 @@ def pixel_distance(real_images, generated_images):
 
 
 class CycleGan(keras.Model):
-    def __init__(self, generator_G, generator_F, discriminator_X, discriminator_Y, lambda_cycle=10.0,
+    def __init__(self, generator_AB, generator_BA, discriminator_B, discriminator_A, lambda_cycle=10.0,
                  lambda_identity=0.5):
         super(CycleGan, self).__init__()
-        self.gen_G = generator_G
-        self.gen_F = generator_F
-        self.disc_X = discriminator_X
-        self.disc_Y = discriminator_Y
+        self.gen_AB = generator_AB
+        self.gen_BA = generator_BA
+        self.disc_B = discriminator_B
+        self.disc_A = discriminator_A
         self.lambda_cycle = lambda_cycle
         self.lambda_identity = lambda_identity
 
-    def compile(self, gen_G_optimizer, gen_F_optimizer, disc_X_optimizer, disc_Y_optimizer, gen_loss_fn, disc_loss_fn):
+    def compile(self, gen_AB_optimizer, gen_BA_optimizer, disc_B_optimizer, disc_A_optimizer, gen_loss_fn,
+                disc_loss_fn):
         super(CycleGan, self).compile()
-        self.gen_G_optimizer = gen_G_optimizer
-        self.gen_F_optimizer = gen_F_optimizer
-        self.disc_X_optimizer = disc_X_optimizer
-        self.disc_Y_optimizer = disc_Y_optimizer
+        self.gen_AB_optimizer = gen_AB_optimizer
+        self.gen_BA_optimizer = gen_BA_optimizer
+        self.disc_B_optimizer = disc_B_optimizer
+        self.disc_A_optimizer = disc_A_optimizer
         self.generator_loss_fn = gen_loss_fn
         self.discriminator_loss_fn = disc_loss_fn
         self.cycle_loss_fn = keras.losses.MeanAbsoluteError()
@@ -182,217 +177,135 @@ class CycleGan(keras.Model):
     def call(self, input_tensor, mask=None, **kwargs):
         pass
 
+    def _get_loss(self, real_a, real_b):
+        fake_b = self.gen_AB(real_a, training=True)
+        fake_a = self.gen_BA(real_b, training=True)
+
+        cycled_a = self.gen_BA(fake_b, training=True)
+        cycled_b = self.gen_AB(fake_a, training=True)
+
+        # Identity mapping
+        # same_a = self.gen_BA(real_a, training=True)
+        # same_b = self.gen_AB(real_b, training=True)
+
+        # Discriminator output
+        disc_real_a = self.disc_A(real_a, training=True)
+        disc_fake_a = self.disc_A(fake_a, training=True)
+
+        disc_real_b = self.disc_B(real_b, training=True)
+        disc_fake_b = self.disc_B(fake_b, training=True)
+
+        # Generator adverserial loss
+        gen_AB_loss = self.generator_loss_fn(disc_fake_b)
+        gen_BA_loss = self.generator_loss_fn(disc_fake_a)
+
+        # Generator cycle loss
+        cycle_loss_B = self.cycle_loss_fn(real_b, cycled_b) * self.lambda_cycle
+        cycle_loss_A = self.cycle_loss_fn(real_a, cycled_a) * self.lambda_cycle
+
+        # Generator identity loss
+        # id_loss_B = self.identity_loss_fn(real_b, same_b) * self.lambda_identity
+        # id_loss_A = self.identity_loss_fn(real_a, same_a) * self.lambda_identity
+
+        # Total generator loss
+        total_loss_AB = gen_AB_loss + cycle_loss_B + cycle_loss_A  # + id_loss_B
+        total_loss_BA = gen_BA_loss + cycle_loss_A + cycle_loss_B  # + id_loss_A
+
+        # Discriminator loss
+        disc_A_loss = self.discriminator_loss_fn(disc_real_a,
+                                                 disc_fake_a)
+        disc_B_loss = self.discriminator_loss_fn(disc_real_b,
+                                                 disc_fake_b)
+        return total_loss_AB, total_loss_BA, disc_B_loss, disc_A_loss
+
     # override
     def train_step(self, batch_data):
-        real_x, real_y = batch_data
-
-        # For CycleGAN, we need to calculate different
-        # kinds of losses for the generators and discriminators.
-        # We will perform the following steps here:
-        #
-        # 1. Pass real images through the generators and get the generated images
-        # 2. Pass the generated images back to the generators to check if we
-        #    we can predict the original image from the generated image.
-        # 3. Do an identity mapping of the real images using the generators.
-        # 4. Pass the generated images in 1) to the corresponding discriminators.
-        # 5. Calculate the generators total loss (adverserial + cycle + identity)
-        # 6. Calculate the discriminators loss
-        # 7. Update the weights of the generators
-        # 8. Update the weights of the discriminators
-        # 9. Return the losses in a dictionary
+        real_a, real_b = batch_data
 
         with tf.GradientTape(persistent=True) as tape:
-            # Horse to fake zebra
-            fake_y = self.gen_G(real_x, training=True)
-            # Zebra to fake horse -> y2x
-            fake_x = self.gen_F(real_y, training=True)
-
-            # Cycle (Horse to fake zebra to fake horse): x -> y -> x
-            cycled_x = self.gen_F(fake_y, training=True)
-            # Cycle (Zebra to fake horse to fake zebra) y -> x -> y
-            cycled_y = self.gen_G(fake_x, training=True)
-
-            # Identity mapping
-            same_x = self.gen_F(real_x, training=True)
-            same_y = self.gen_G(real_y, training=True)
-
-            # Discriminator output
-            disc_real_x = self.disc_X(real_x, training=True)
-            disc_fake_x = self.disc_X(fake_x, training=True)
-
-            disc_real_y = self.disc_Y(real_y, training=True)
-            disc_fake_y = self.disc_Y(fake_y, training=True)
-
-            # Generator adverserial loss
-            gen_G_loss = self.generator_loss_fn(disc_fake_y)
-            gen_F_loss = self.generator_loss_fn(disc_fake_x)
-
-            # Generator cycle loss
-            cycle_loss_G = self.cycle_loss_fn(real_y, cycled_y) * self.lambda_cycle
-            cycle_loss_F = self.cycle_loss_fn(real_x, cycled_x) * self.lambda_cycle
-
-            # Generator identity loss
-            id_loss_G = (
-                    self.identity_loss_fn(real_y, same_y)
-                    * self.lambda_cycle
-                    * self.lambda_identity
-            )
-            id_loss_F = (
-                    self.identity_loss_fn(real_x, same_x)
-                    * self.lambda_cycle
-                    * self.lambda_identity
-            )
-
-            # Total generator loss
-            total_loss_G = gen_G_loss + cycle_loss_G + id_loss_G
-            total_loss_F = gen_F_loss + cycle_loss_F + id_loss_F
-
-            # Discriminator loss
-            disc_X_loss = self.discriminator_loss_fn(disc_real_x, disc_fake_x) + wasserstein_loss(disc_real_x,
-                                                                                                  disc_fake_x)/100
-            disc_Y_loss = self.discriminator_loss_fn(disc_real_y, disc_fake_y) + wasserstein_loss(disc_real_y,
-                                                                                                  disc_fake_y)/100
-
+            total_loss_AB, total_loss_BA, disc_B_loss, disc_A_loss = self._get_loss(real_a, real_b)
         # Get the gradients for the generators
-        grads_G = tape.gradient(total_loss_G, self.gen_G.trainable_variables)
-        grads_F = tape.gradient(total_loss_F, self.gen_F.trainable_variables)
+        grads_AB = tape.gradient(total_loss_AB, self.gen_AB.trainable_variables)
+        grads_BA = tape.gradient(total_loss_BA, self.gen_BA.trainable_variables)
 
         # Get the gradients for the discriminators
-        disc_X_grads = tape.gradient(disc_X_loss, self.disc_X.trainable_variables)
-        disc_Y_grads = tape.gradient(disc_Y_loss, self.disc_Y.trainable_variables)
+        disc_B_grads = tape.gradient(disc_B_loss, self.disc_B.trainable_variables)
+        disc_A_grads = tape.gradient(disc_A_loss, self.disc_A.trainable_variables)
 
         # Update the weights of the generators
-        self.gen_G_optimizer.apply_gradients(
-            zip(grads_G, self.gen_G.trainable_variables)
+        self.gen_AB_optimizer.apply_gradients(
+            zip(grads_AB, self.gen_AB.trainable_variables)
         )
-        self.gen_F_optimizer.apply_gradients(
-            zip(grads_F, self.gen_F.trainable_variables)
+        self.gen_BA_optimizer.apply_gradients(
+            zip(grads_BA, self.gen_BA.trainable_variables)
         )
 
         # Update the weights of the discriminators
-        self.disc_X_optimizer.apply_gradients(
-            zip(disc_X_grads, self.disc_X.trainable_variables)
+        self.disc_B_optimizer.apply_gradients(
+            zip(disc_B_grads, self.disc_B.trainable_variables)
         )
-        self.disc_Y_optimizer.apply_gradients(
-            zip(disc_Y_grads, self.disc_Y.trainable_variables)
+        self.disc_A_optimizer.apply_gradients(
+            zip(disc_A_grads, self.disc_A.trainable_variables)
         )
 
-        acc = (pixel_distance(real_x, cycled_x) + pixel_distance(real_y, cycled_y)) / 2
+        # acc = (pixel_distance(real_a, cycled_a) + pixel_distance(real_b, cycled_b)) / 2
         return {
-            "acc": acc,
-            "G_loss": total_loss_G,
-            "F_loss": total_loss_F,
-            "D_X_loss": disc_X_loss,
-            "D_Y_loss": disc_Y_loss,
+            "AB_loss": total_loss_AB,
+            "BA_loss": total_loss_BA,
+            "D_A_loss": disc_A_loss,
+            "D_B_loss": disc_B_loss,
         }
 
-    # def test_step(self, batch_data):
-    #     real_x, real_y = batch_data
-    #
-    #     fake_y = self.gen_G(real_x, training=False)
-    #     fake_x = self.gen_F(real_y, training=False)
-    #
-    #     cycled_x = self.gen_F(fake_y, training=False)
-    #     cycled_y = self.gen_G(fake_x, training=False)
-    #
-    #     same_x = self.gen_F(real_x, training=False)
-    #     same_y = self.gen_G(real_y, training=False)
-    #
-    #     disc_real_x = self.disc_X(real_x, training=False)
-    #     disc_fake_x = self.disc_X(fake_x, training=False)
-    #
-    #     disc_real_y = self.disc_Y(real_y, training=False)
-    #     disc_fake_y = self.disc_Y(fake_y, training=False)
-    #
-    #     # Generator adverserial loss
-    #     gen_G_loss = self.generator_loss_fn(disc_fake_y)
-    #     gen_F_loss = self.generator_loss_fn(disc_fake_x)
-    #
-    #     # Generator cycle loss
-    #     cycle_loss_G = self.cycle_loss_fn(real_y, cycled_y) * self.lambda_cycle
-    #     cycle_loss_F = self.cycle_loss_fn(real_x, cycled_x) * self.lambda_cycle
-    #
-    #     # Generator identity loss
-    #     id_loss_G = (self.identity_loss_fn(real_y, same_y) * self.lambda_cycle * self.lambda_identity)
-    #     id_loss_F = (self.identity_loss_fn(real_x, same_x) * self.lambda_cycle * self.lambda_identity)
-    #
-    #     # Total generator loss
-    #     total_loss_G = gen_G_loss + cycle_loss_G + id_loss_G
-    #     total_loss_F = gen_F_loss + cycle_loss_F + id_loss_F
-    #
-    #     # Discriminator loss
-    #     disc_X_loss = self.discriminator_loss_fn(disc_real_x, disc_fake_x)
-    #     disc_Y_loss = self.discriminator_loss_fn(disc_real_y, disc_fake_y)
-    #
-    #     acc = (pixel_distance(real_x, cycled_x) + pixel_distance(real_y, cycled_y)) / 2
-    #     return {
-    #         "val_acc": acc,
-    #         "val_G_loss": total_loss_G,
-    #         "val_F_loss": total_loss_F,
-    #         "val_D_X_loss": disc_X_loss,
-    #         "val_D_Y_loss": disc_Y_loss,
-    #     }
+        # override
+
+    def test_step(self, batch_data):
+        real_a, real_b = batch_data
+        total_loss_AB, total_loss_BA, disc_B_loss, disc_A_loss = self._get_loss(real_a, real_b)
+
+        return {
+            "G_loss": total_loss_AB + total_loss_BA,
+            "D_loss": disc_A_loss + disc_B_loss,
+        }
 
     def save(self, name, **kwargs):
-        self.gen_G.save(name + "/gen_G.h5")
-        self.gen_F.save(name + "/gen_F.h5")
-        self.disc_X.save(name + "/disc_X.h5")
-        self.disc_Y.save(name + "/disc_Y.h5")
+        self.gen_AB.save(name + "/gen_AB.h5")
+        self.gen_BA.save(name + "/gen_BA.h5")
+        self.disc_B.save(name + "/disc_B.h5")
+        self.disc_A.save(name + "/disc_A.h5")
 
     def save_weights(self, name, **kwargs):
         if not os.path.exists(name):
             os.makedirs(name)
-        self.gen_G.save_weights(name + "/gen_G.h5")
-        self.gen_F.save_weights(name + "/gen_F.h5")
-        self.disc_X.save_weights(name + "/disc_X.h5")
-        self.disc_Y.save_weights(name + "/disc_Y.h5")
+        self.gen_AB.save_weights(name + "/gen_AB.h5")
+        self.gen_BA.save_weights(name + "/gen_BA.h5")
+        self.disc_B.save_weights(name + "/disc_B.h5")
+        self.disc_A.save_weights(name + "/disc_A.h5")
 
     def load_weights(self, name, **kwargs):
-        self.gen_G.load_weights(name + "/gen_G.h5")
-        self.gen_F.load_weights(name + "/gen_F.h5")
-        self.disc_X.load_weights(name + "/disc_X.h5")
-        self.disc_Y.load_weights(name + "/disc_Y.h5")
+        self.gen_AB.load_weights(name + "/gen_AB.h5")
+        self.gen_BA.load_weights(name + "/gen_BA.h5")
+        self.disc_B.load_weights(name + "/disc_B.h5")
+        self.disc_A.load_weights(name + "/disc_A.h5")
 
 
-"""
-## Create a callback that periodically saves generated images
-"""
+def cycle_image_to_image_func(gen, model):
+    def f():
+        t_a, t_b = gen.next()
+        test_A = t_a[:2]
+        test_B = t_b[:2]
+        prediction_B = model.gen_AB.predict(test_A)
+        prediction_A = model.gen_BA.predict(test_B)
+        prediction = np.concatenate([prediction_B, prediction_A], 0)
+        train_x = np.concatenate([test_A, test_B], 0)
+
+        return train_x, prediction
+
+    return f
 
 
-class GANMonitor(keras.callbacks.Callback):
-    """A callback to generate and save images after each epoch"""
-
-    def __init__(self, cycle_gan_model, gen, num_img=4):
-        self.num_img = num_img
-        self.gen = gen
-        self.model = cycle_gan_model
-
-    def on_epoch_end(self, epoch, logs=None):
-        _, ax = plt.subplots(4, 2, figsize=(12, 12))
-        test_A = []
-        while len(test_A) < self.num_img:
-            t, _ = self.gen.next()
-            test_A.extend(list(t))
-        test_A = test_A[:self.num_img]
-        test_A = np.asarray(test_A)
-        prediction = self.model.gen_G(test_A)
-        for i, (img, pred) in enumerate(zip(test_A, prediction)):
-            pr = (pred.numpy() * 127.5 + 127.5).astype(np.uint8)
-            im = (img * 127.5 + 127.5).astype(np.uint8)
-            ax[i, 0].imshow(im, 'gray')
-            ax[i, 1].imshow(pr, 'gray')
-            ax[i, 0].set_title("Input image")
-            ax[i, 1].set_title("Translated image")
-            ax[i, 0].axis("off")
-            ax[i, 1].axis("off")
-            cv2.imwrite("../results/cycle_result/generated_img_{i}_{epoch}.png".format(i=i, epoch=epoch + 1), pr)
-        plt.show()
-        plt.close()
-
-
-"""
-## Train the end-to-end model
-"""
+def dataset_function(aug: AugmentationUtils):
+    # add noise +4
+    return aug.ninty_rotation().zoom_range(l=0.7, r=1).add_gauss_noise(0, 0.00025)
 
 
 # Define the loss function for the generators
@@ -412,62 +325,31 @@ def wasserstein_loss(real, fake):
     return (tf.reduce_sum(real * ones) + tf.reduce_sum(fake * zeros)) / batch_size / 2
 
 
-def load_dataset(mask_dir, data_dir, subset=None):
-    aug = AugmentationUtils() \
-        .rescale(stdNorm=True) \
-        .horizontal_flip() \
-        .vertical_flip() \
-        .ninty_rotation() \
-        .validation_split(0.1)
-    genA = aug.create_generator(mask_dir,
-                                target_size=orig_img_size,
-                                batch_size=batch_size,
-                                color_mode='grayscale',
-                                class_mode=None,
-                                subset=subset)
-
-    # .add_median_blur() \
-    # .add_gaussian_blur() \
-
-    aug = AugmentationUtils() \
-        .rescale(stdNorm=True) \
-        .horizontal_flip() \
-        .vertical_flip() \
-        .ninty_rotation() \
-        .validation_split(0.1)
-    genB = aug.create_generator(data_dir,
-                                target_size=orig_img_size,
-                                batch_size=batch_size,
-                                color_mode='grayscale',
-                                class_mode=None,
-                                subset=subset)
-
-    return genA, genB
-
-
 def get_cycleGAN():
     # Get the generators
-    gen_G = get_resnet_generator(name="generator_G")
-    gen_F = get_resnet_generator(name="generator_F")
+    gen_AB = get_resnet_generator(name="generator_AB")
+    gen_BA = get_resnet_generator(name="generator_BA")
     # Get the discriminators
-    disc_X = get_discriminator(name="discriminator_X")
-    disc_Y = get_discriminator(name="discriminator_Y")
-    # disc_X.summary()
-    # disc_Y.summary()
-    # gen_G.summary()
-    # gen_F.summary()
+    disc_B = get_discriminator(name="discriminator_B")
+    disc_A = get_discriminator(name="discriminator_A")
+    # disc_B.summary()
+    # disc_A.summary()
+    # gen_AB.summary()
+    # gen_BA.summary()
 
     # Create cycle gan model
     cycle_gan_model = CycleGan(
-        generator_G=gen_G, generator_F=gen_F, discriminator_X=disc_X, discriminator_Y=disc_Y
+        generator_AB=gen_AB, generator_BA=gen_BA, discriminator_B=disc_B, discriminator_A=disc_A,
+        lambda_cycle=10,
+        lambda_identity=0.1
     )
 
     # Compile the model
     cycle_gan_model.compile(
-        gen_G_optimizer=keras.optimizers.Adam(learning_rate=2e-4, beta_1=0.5),
-        gen_F_optimizer=keras.optimizers.Adam(learning_rate=2e-4, beta_1=0.5),
-        disc_X_optimizer=keras.optimizers.Adam(learning_rate=2e-4, beta_1=0.5),
-        disc_Y_optimizer=keras.optimizers.Adam(learning_rate=2e-4, beta_1=0.5),
+        gen_AB_optimizer=keras.optimizers.Adam(learning_rate=2e-4, beta_1=0.5),
+        gen_BA_optimizer=keras.optimizers.Adam(learning_rate=2e-4, beta_1=0.5),
+        disc_A_optimizer=keras.optimizers.Adam(learning_rate=2e-4, beta_1=0.5),
+        disc_B_optimizer=keras.optimizers.Adam(learning_rate=2e-4, beta_1=0.5),
         gen_loss_fn=generator_loss_fn,
         disc_loss_fn=discriminator_loss_fn,
     )
@@ -478,32 +360,32 @@ def train(cycle_gan_model, train_dataset, test_dataset, weight_file=""):
     if weight_file != "":
         cycle_gan_model.load_weights(weight_file)
     # Callbacks
-    plotter = GANMonitor(cycle_gan_model, test_dataset)
-    # checkpoint_filepath = "./model_checkpoints/cyclegan_checkpoints.{epoch:03d}"
-    # model_checkpoint_callback = keras.callbacks.ModelCheckpoint(filepath=checkpoint_filepath)
+    callbacks = get_callbacks('../models/cycleGAN', cycle_image_to_image_func(test_dataset, cycle_gan_model),
+                              monitor_loss='val_G_loss')
+
     now = datetime.now().strftime("%m%d%H:%M")
-    model_checkpoint_callback = keras.callbacks.ModelCheckpoint('../models/cycleGAN/model' + now,
-                                                                save_best_only=True,
-                                                                monitor='acc', mode='min', save_weights_only=True)
+    model_checkpoint_callback = keras.callbacks.ModelCheckpoint('../models/cycleGAN/model{epoch}' + now,
+                                                                verbose=1,
+                                                                save_freq=10 * len(train_dataset),
+                                                                save_weights_only=True)
+    callbacks.append(model_checkpoint_callback)
     t = len(train_dataset)
     v = len(test_dataset)
-    history = cycle_gan_model.fit(train_dataset, steps_per_epoch=t, epochs=100, validation_data=test_dataset,
+
+    history = cycle_gan_model.fit(train_dataset, steps_per_epoch=t, epochs=10,
+                                  validation_data=test_dataset,
                                   validation_steps=v,
-                                  callbacks=[plotter, model_checkpoint_callback])
+                                  callbacks=callbacks)
     plot_graphs(history.history)
 
 
 def test(cycle_gan_model, test_A):
-    # Load the checkpoints
-    weight_file = "../models/cycleGAN/model010419:50"
-    cycle_gan_model.load_weights(weight_file)
-
-    _, ax = plt.subplots(4, 2, figsize=(10, 15))
-    for i, img in enumerate(batch_to_image(test_A, count=4, wrap=True)):
-        prediction = cycle_gan_model.gen_G(img, training=False)[0]
-        prediction = (prediction * 127.5 + 127.5).numpy().astype(np.uint8)
-        img = (img[0] * 127.5 + 127.5).astype(np.uint8)
-
+    _, ax = plt.subplots(4, 2, figsize=(12, 12))
+    imgs = get_gen_images(test_A, count=4)
+    predictions = cycle_gan_model.gen_AB(imgs, training=False)
+    predictions = (predictions * 127.5 + 127.5).astype(np.uint8)
+    imgs = (imgs * 127.5 + 127.5).astype(np.uint8)
+    for i, img, prediction in enumerate(zip(imgs, predictions)):
         ax[i, 0].imshow(img, 'gray')
         ax[i, 1].imshow(prediction, 'gray')
         ax[i, 0].set_title("Input image")
@@ -511,7 +393,6 @@ def test(cycle_gan_model, test_A):
         ax[i, 1].set_title("Translated image")
         ax[i, 0].axis("off")
         ax[i, 1].axis("off")
-
         prediction = keras.preprocessing.image.array_to_img(prediction)
         prediction.save("../results/cycle_result/predicted_img_{i}.png".format(i=i))
     plt.tight_layout()
@@ -519,55 +400,57 @@ def test(cycle_gan_model, test_A):
 
 
 def check(cycle_gan_model, test_A):
-    weight_file = "../models/cycleGAN/model010419:50"
-    cycle_gan_model.load_weights(weight_file)
-    res = []
-    for img in batch_to_image(test_A, wrap=True):
-        prediction = cycle_gan_model.gen_G(img, training=False)[0]
-        prediction = prediction
-        img = img[0]
-        res.append(np.concatenate((img, prediction), axis=1))
-    save_images(np.asarray(res), '../results/cycle_result/test_images3/', stdNorm=True)
+    test_A.seed = 0
+    imgs = get_gen_images(test_A)
+    test_A.seed = 0
+    predictions = cycle_gan_model.gen_AB.predict(test_A)
+    # unionTestImages(imgs, predictions, path='../results/cycle_result/test_images/', stdNorm=True)
+    save_images(np.hstack([imgs, predictions]), path='../results/cycle_result/test_images/', stdNorm=True)
 
 
 def check2(cycle_gan_model, test_B):
-    weight_file = "../models/cycleGAN/model010419:50"
-    cycle_gan_model.load_weights(weight_file)
-    res = []
-    for img in batch_to_image(test_B, wrap=True):
-        prediction = cycle_gan_model.gen_F(img, training=False)[0]
-        prediction = prediction
-        img = img[0]
-        res.append(np.concatenate((img, prediction), axis=1))
-    save_images(np.asarray(res), '../results/cycle_result/test_images2/', stdNorm=True)
+    test_B.seed = 0
+    imgs = get_gen_images(test_B)
+    test_B.seed = 0
+    predictions = cycle_gan_model.gen_BA.predict(test_B)
+    # unionTestImages(imgs, predictions, path='../results/cycle_result/test_images2/', stdNorm=True)
+    save_images(np.hstack([imgs, predictions]), path='../results/cycle_result/test_images2/', stdNorm=True)
 
 
 def generate_for_layer(cycle_gan_model, image_path, atob=True):
     image = std_norm_x(read_image(image_path))
-    weight_file = "../models/cycleGAN/model011721:08"
-    cycle_gan_model.load_weights(weight_file)
-    images, _, _ = split_image(image, height, step=128)
+    images, _, _ = split_image(image, im_size, step=128)
     images = np.asarray(images)
     if atob:
-        predictions = cycle_gan_model.gen_G(images, training=False)
+        predictions = cycle_gan_model.gen_AB.predict(images, batch_size=batch_size)
     else:
-        predictions = cycle_gan_model.gen_F(images, training=False)
+        predictions = cycle_gan_model.gen_BA.predict(images, batch_size=batch_size)
     predictions = np.asarray(predictions)
-    predictions = np.reshape(predictions, predictions.shape[:-1])
-    unionTestImages(images, predictions, path="../results/cycle_result/test_images3/")
-    # k = int(math.sqrt(len(predictions)))
-    # res = unionImage(predictions, k, k)
-    # save_images(np.asarray(res), '../results/cycle_result/test_images3/', stdNorm=True)
+    predictions = std_norm_reverse(np.reshape(predictions, predictions.shape[:-1]))
+    concat_clip_save(predictions, "../results/cycle_result/test_images3/im.png", int(math.sqrt(predictions.shape[0])))
 
 
-mode_test = False
+mode_test = True
 if __name__ == '__main__':
     model = get_cycleGAN()
-    train_A, train_B = load_dataset(imageA_path, imageB_path, subset='training')
-    val_A, val_B = load_dataset(imageA_path, imageB_path, subset='validation')
+    train_generator, val_generator = create_image_to_image_dataset([imageA_path, imageB_path],
+                                                                   batch_size=batch_size,
+                                                                   im_size=im_size,
+                                                                   different_seed=True, stdNorm=True)
+    # test_generator("../results/test", train_A, stdNorm=True)
+    # test_generator("../results/test", UnionGenerator([val_A, val_B]), stdNorm=True)
     if mode_test:
-        # check2(model, val_B)
-        # check(model, val_A)
+        weight_file = "../models/cycleGAN/model012514:29"
+        model.load_weights(weight_file)
+        check2(model, val_generator.generators[1])
+        check(model, val_generator.generators[0])
         generate_for_layer(model, "../datasets/cycle/test/cy2_m1_0518.jpg", atob=False)
     else:
-        train(model, UnionGenerator([train_A, train_B], batch_size), UnionGenerator([val_A, val_B], batch_size))
+        train(model, train_generator, val_generator)
+        t_a = get_gen_images(train_generator.generators[0])
+        t_b = get_gen_images(train_generator.generators[1])
+        prediction_B = model.gen_AB.predict(train_generator.generators[0])
+        prediction_A = model.gen_BA.predict(train_generator.generators[1])
+        model = None
+        knn_precision_recall_features(t_a, prediction_A, row_batch_size=100, col_batch_size=100)
+        knn_precision_recall_features(t_b, prediction_B, row_batch_size=100, col_batch_size=100)

@@ -95,7 +95,7 @@ class NoiseEncoder(Encoder):
 
 class StyleEncoder(Encoder):
     def __init__(self, model):
-        super().__init__(model, [(0.005, 200), (0.002, 100), (0.001, 100), (0.0005, 100)], n2=np.zeros_like(nImage(1)))
+        super().__init__(model, [(0.005, 200), (0.002, 100), (0.001, 200), (0.0005, 100)], n2=np.zeros_like(nImage(1)))
 
     def _opt_step(self, x1, x2, target, lr):
         with tf.GradientTape(persistent=True) as g:
@@ -115,7 +115,7 @@ class StyleEncoder(Encoder):
 
 class UnionEncoder(Encoder):
     def __init__(self, model):
-        super().__init__(model, [(0.002, 200), (0.001, 200), (0.0005, 100), (0.0002, 100), (0.0001, 100)])
+        super().__init__(model, [(0.002, 200), (0.001, 200), (0.0005, 200), (0.0002, 200), (0.0001, 200)])
 
     def _opt_step(self, x1, x2, target, lr):
         # opt = tf.keras.optimizers.Adam(learning_rate=lr)

@@ -4,7 +4,6 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-
 from tensorflow.keras import backend as K
 from tensorflow.keras import initializers, regularizers, constraints
 from tensorflow.keras.layers import Layer, InputSpec
@@ -63,7 +62,6 @@ class Conv2DMod(Layer):
         self.built = True
 
     def call(self, inputs, **kwargs):
-
         # To channels last
         x = tf.transpose(inputs[0], [0, 3, 1, 2])
 
@@ -129,3 +127,36 @@ class Conv2DMod(Layer):
         }
         base_config = super(Conv2DMod, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
+
+    def call_for_cpu(self, inputs, **kwargs):
+        # To channels last
+        x = inputs[0]
+
+        # Get weight and bias modulations
+        # Make sure w's shape is compatible with self.kernel
+        w = K.expand_dims(K.expand_dims(K.expand_dims(inputs[1], axis=1), axis=1), axis=-1)
+        # Add minibatch layer to weights
+        wo = K.expand_dims(self.kernel, axis=0)
+        # Modulate
+        weights = wo * (w + 1)
+        # Demodulate
+        if self.demod:
+            d = K.sqrt(K.sum(K.square(weights), axis=[1, 2, 3], keepdims=True) + 1e-8)
+            weights = weights / d
+
+        # Reshape/scale input
+        x = tf.transpose(x, [0, 3, 1, 2])
+        x = tf.reshape(x, [1, -1, x.shape[2], x.shape[3]])
+        x = tf.transpose(x, [0, 2, 3, 1])
+        w = tf.reshape(tf.transpose(weights, [1, 2, 3, 0, 4]),
+                       [weights.shape[1], weights.shape[2], weights.shape[3], -1])
+
+        x = tf.nn.conv2d(x, w,
+                         strides=self.strides,
+                         padding="SAME",
+                         data_format="NHWC")
+        # Reshape/scale output.
+        x = tf.transpose(x, [0, 3, 1, 2])
+        x = tf.reshape(x, [-1, self.filters, x.shape[2], x.shape[3]])
+        x = tf.transpose(x, [0, 2, 3, 1])
+        return x

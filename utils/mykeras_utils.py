@@ -1,12 +1,16 @@
+from datetime import datetime
 from datetime import timedelta
-from tensorflow import keras
+
 import tensorflow as tf
-from keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.utils import Sequence
-from scipy import linalg
-from utils.noisy import *
-from tensorflow.keras import layers
 from keras.applications.inception_v3 import InceptionV3
+from keras.preprocessing.image import ImageDataGenerator
+from scipy import linalg
+from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras.callbacks import ModelCheckpoint
+from tensorflow.keras.utils import Sequence
+
+from utils.noisy import *
 
 
 class ReflectionPadding2D(layers.Layer):
@@ -40,14 +44,14 @@ class ReflectionPadding2D(layers.Layer):
 class UnionGenerator(Sequence):
     """Helper to iterate over the data (as Numpy arrays)."""
 
-    def __init__(self, generators, batch_size):
+    def __init__(self, generators):
 
         self.generators = generators
-        self.batch_size = batch_size
         self.operators = []
+        self.batch_size = generators[0].batch_size
 
     def __len__(self):
-        return self.generators[0].samples // self.batch_size
+        return self.generators[0].samples // self.generators[0].batch_size
 
     def __getitem__(self, idx):
         arrs = []
@@ -60,7 +64,7 @@ class UnionGenerator(Sequence):
                     arrs[j][i] = f(arrs[j][i], rnd)
         return tuple(arrs)
 
-    def reflect_rotate(self):
+    def ninty_rotate(self):
         def f(img, rnd):
             im = np.rot90(img, k=rnd)
             return im
@@ -89,6 +93,16 @@ class AugmentationUtils:
                                      subset=subset,
                                      seed=seed)
 
+    def create_memory_generator(self, data_dir, target_size=(128, 128), batch_size=16,
+                                subset=None, gray=True, seed=None):
+        self.params["preprocessing_function"] = self._augment()
+        read_dir(data_dir, target_size[0], target_size[1], gray=gray)
+        g = ImageDataGenerator(**self.params)
+        return g.flow(data_dir,
+                      batch_size=batch_size,
+                      subset=subset,
+                      seed=seed)
+
     def train_val_generator(self, data_dir, target_size=(128, 128), batch_size=16,
                             color_mode='grayscale', class_mode=None, seed=None):
         return self.create_generator(data_dir,
@@ -110,16 +124,14 @@ class AugmentationUtils:
         op = self.operators.copy()
 
         def augment(img):
-            # im = np.reshape(img, img.shape[:-1])
             im = img
             for f in op:
                 im = f(im)
-            # return np.expand_dims(im, axis=-1)
             return im
 
         return augment
 
-    def validation_split(self, split=0.2):
+    def validation_split(self, split=0.1):
         self.params['validation_split'] = split
         return self
 
@@ -156,44 +168,44 @@ class AugmentationUtils:
         self.operators.append(f)
         return self
 
-    def add_gauss_noise(self, mean=0, var=0.1):
+    def add_gauss_noise(self, mean=0, var=0.1, p=0.5):
         def f(image):
-            return gauss_noise(image, mean, var)
+            return gauss_noise(image, mean, var, p)
 
         self.operators.append(f)
         return self
 
-    def add_big_light_hole(self, count=3, hl=10, hr=30, wl=10, wr=30):
+    def add_big_light_hole(self, count=3, hl=10, hr=30, wl=10, wr=30, p=0.5):
         def f(image):
-            return big_light_hole(image, count, hl, hr, wl, wr)
+            return big_light_hole(image, count, hl, hr, wl, wr, p)
 
         self.operators.append(f)
         return self
 
-    def add_salt_paper(self, s_vs_p=0.5, amount=0.05):
+    def add_salt_paper(self, s_vs_p=0.5, amount=0.05, p=0.5):
         def f(image):
-            return salt_paper(image, s_vs_p, amount)
+            return salt_paper(image, s_vs_p, amount, p)
 
         self.operators.append(f)
         return self
 
-    def add_light_side(self, coeff=1.5, exponential=False):
+    def add_light_side(self, coeff=1.5, exponential=False, p=0.5):
         def f(image):
-            return light_side(image, coeff, exponential)
+            return light_side(image, coeff, exponential, p)
 
         self.operators.append(f)
         return self
 
-    def add_big_own_defect(self, count=20, hl=5, hr=15, wl=5, wr=15):
+    def add_big_own_defect(self, count=20, hl=5, hr=15, wl=5, wr=15, p=0.5):
         def f(image):
-            return big_own_defect(image, count, hl, hr, wl, wr)
+            return big_own_defect(image, count, hl, hr, wl, wr, p)
 
         self.operators.append(f)
         return self
 
-    def add_defect_expansion_algorithm(self, count=20, sizel=10, sizer=50, gauss=True):
+    def add_defect_expansion_algorithm(self, count=20, sizel=10, sizer=50, gauss=True, p=0.5):
         def f(image):
-            return expansion_algorithm(image, count, sizel, sizer, gauss)
+            return expansion_algorithm(image, count, sizel, sizer, gauss, p)
 
         self.operators.append(f)
         return self
@@ -205,8 +217,12 @@ class AugmentationUtils:
         self.operators.append(f)
         return self
 
-    def add_median_blur(self, k=5):
+    def add_median_blur(self, k=5, p=1.0):
         def f(image):
+            rnd = random.Random()
+            pr = rnd.uniform(0.0, 1.0)
+            if pr > p:
+                return image
             img = np.ascontiguousarray(image, dtype=np.float32)
             cv2.medianBlur(img, k, img)
             return img
@@ -214,8 +230,12 @@ class AugmentationUtils:
         self.operators.append(f)
         return self
 
-    def add_gaussian_blur(self, sigma=1.0):
+    def add_gaussian_blur(self, sigma=1.0, p=1.0):
         def f(image):
+            rnd = random.Random()
+            pr = rnd.uniform(0.0, 1.0)
+            if pr > p:
+                return image
             cv2.GaussianBlur(image, (0, 0), sigma, image)
             return image
 
@@ -231,46 +251,33 @@ class AugmentationUtils:
         return self
 
 
-def batch_to_image(generator, count=None, wrap=False):
-    def wrapper(data, wrap=False):
-        if wrap:
-            return np.asarray([data])
-        else:
-            return data
-
+def get_gen_images(generator, count=None):
     cnt = 0
-    for i in range(len(generator)):
-        data = generator.__getitem__(i)
-        ok = False
-        if type(data) is not list and type(data) is not tuple:
-            data = [data]
-            ok = True
-        for i in range(len(data[0])):
-            if not ok:
-                yield [wrapper(data[j][i], wrap) for j in range(len(data))]
-            else:
-                yield [wrapper(data[0][i], wrap)]
-            cnt += 1
-            if cnt == count:
-                return
-
-
-def get_gen_images(generator, count=1):
-    images = [[] for i in range(count)]
-    for data in batch_to_image(generator):
-        for i, im in enumerate(data):
-            images[i].append(im)
-    images = [np.asarray(res) for res in images]
-    if count > 1:
-        return images
+    if type(generator) is UnionGenerator:
+        images = [[] for _ in range(len(generator.generators))]
+        for i in range(len(generator)):
+            data = generator.__getitem__(i)
+            for i, im in enumerate(data):
+                images[i].append(im)
+            cnt += data[0].shape[0]
+            if count is not None and cnt >= count:
+                return [np.concatenate(res)[:count] for res in images]
+        return [np.concatenate(res) for res in images]
     else:
-        return images[0]
+        images = []
+        for i in range(len(generator)):
+            data = generator.__getitem__(i)
+            images.append(data)
+            cnt += data.shape[0]
+            if count is not None and cnt >= count:
+                return np.concatenate(images)[:count]
+        return np.concatenate(images)
 
 
 def test_generator(save_dir, generator, count=None, stdNorm=False):
-    imgs = []
-    for img in batch_to_image(generator, count=count, wrap=False):
-        imgs.append(np.vstack(img))
+    imgs = get_gen_images(generator, count=count)
+    if type(imgs) is list or type(imgs) is tuple:
+        imgs = np.hstack(imgs)
     save_images(imgs, save_dir, stdNorm=stdNorm)
 
 
@@ -311,13 +318,20 @@ def scan_image(gen, image, h, w, step=8, e=0.01):
     return ans
 
 
-def test_real_frame(model_path, image_path, output_path='scan_results/', stdNorm=False, interpolate=False):
-    gen = keras.models.load_model(model_path)
-    return process_real_frame(gen, image_path, output_path=output_path, stdNorm=stdNorm, interpolate=interpolate)
-
-
-def process_real_frame(gen, image_path, output_path='scan_results/', stdNorm=False, interpolate=False):
+def test_real_frame(model_path, image_path, model=None, output_path='../results/scan_results/', stdNorm=False,
+                    interpolate=False):
+    if model is None:
+        gen = keras.models.load_model(model_path)
+    else:
+        gen = model.load_weights(model_path)
     images = read_dir(image_path, 0, 0)
+    imageNames = os.listdir(image_path)
+    return process_real_frame(gen, images, output_path=output_path, stdNorm=stdNorm, interpolate=interpolate,
+                              imageNames=imageNames)
+
+
+def process_real_frame(gen, images, output_path='../results/scan_results/', stdNorm=False, interpolate=False,
+                       imageNames=None):
     res = []
     for image in images:
         if stdNorm:
@@ -330,7 +344,7 @@ def process_real_frame(gen, image_path, output_path='scan_results/', stdNorm=Fal
             res.append(im)
         else:
             res.append(scan_image(gen, image, 128, 128))
-    save_images(np.asarray(res), output_path, stdNorm, imageNames=os.listdir(image_path))
+    save_images(np.asarray(res), output_path, stdNorm, imageNames=imageNames)
 
     # estimate quality
     # print(compare_images_by_function(images, res, contrast_measure))
@@ -338,6 +352,83 @@ def process_real_frame(gen, image_path, output_path='scan_results/', stdNorm=Fal
     # print(compare_images_by_function(images, res, psnr, True))
     # print(compare_images_by_function(images, res, similarity, True))
     return np.asarray(res)
+
+
+def image_to_image_predict(gen, model):
+    def f():
+        train_x, *_ = gen.next()
+        train_x = train_x[:4]
+        prediction = model.predict(train_x)
+        return train_x, prediction
+
+    return f
+
+
+class ImageMonitor(keras.callbacks.Callback):
+
+    def __init__(self, train_pred_func):
+        self.train_pred_func = train_pred_func
+
+    def on_epoch_end(self, epoch, logs=None):
+        fig, ax = plt.subplots(4, 2, figsize=(12, 12))
+        fig.suptitle("Epoch " + str(epoch))
+        train_x, prediction = self.train_pred_func()
+        for i, (img, pred) in enumerate(zip(train_x, prediction)):
+            pr = (pred * 255).astype(np.uint8)
+            im = (img * 255).astype(np.uint8)
+            ax[i, 0].imshow(im, 'gray')
+            ax[i, 1].imshow(pr, 'gray')
+            ax[i, 0].set_title("Input image")
+            ax[i, 1].set_title("Translated image")
+            ax[i, 0].axis("off")
+            ax[i, 1].axis("off")
+        plt.show()
+        plt.close()
+
+
+def get_callbacks(save_url, train_pred_func, save_weights_only=True, custom_save=False, monitor_loss='val_loss'):
+    now = datetime.now().strftime("%m%d%H:%M")
+    if custom_save:
+        save_url += '/model' + now
+    if not os.path.exists(save_url):
+        os.makedirs(save_url)
+    monitor = ImageMonitor(train_pred_func)
+    if not custom_save:
+        save_url += '/model' + now + '.h5'
+    mcp_save = ModelCheckpoint(save_url, save_best_only=True,
+                               save_weights_only=save_weights_only,
+                               verbose=1,
+                               monitor=monitor_loss)
+    return [monitor, mcp_save]
+
+
+def create_image_to_image_dataset(image_dirs: list, aug_extension=None, stdNorm=False,
+                                  batch_size=8, im_size=128, color_mode='grayscale', different_seed=False):
+    seed = random.randint(0, 2 ** 30)
+    train_gens = []
+    val_gens = []
+    for i, path in enumerate(image_dirs):
+        aug = AugmentationUtils() \
+            .rescale(stdNorm) \
+            .horizontal_flip() \
+            .vertical_flip() \
+            .validation_split()
+        if aug_extension is not None and len(aug_extension) > i and aug_extension[i] is not None:
+            aug = aug_extension[i](aug)
+        if different_seed:
+            seed = random.randint(0, 2 ** 30)
+        train_generator, val_generator = aug.train_val_generator(path,
+                                                                 target_size=(im_size, im_size),
+                                                                 batch_size=batch_size,
+                                                                 color_mode=color_mode,
+                                                                 class_mode=None,
+                                                                 seed=seed)
+        train_gens.append(train_generator)
+        val_gens.append(val_generator)
+
+    train_generator = UnionGenerator(train_gens).ninty_rotate()
+    val_generator = UnionGenerator(val_gens).ninty_rotate()
+    return train_generator, val_generator
 
 
 def cross_validation(data, targets, k=4):
