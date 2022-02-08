@@ -93,7 +93,7 @@ if __name__ == '__main__':
     mask_dir = '../datasets/unet/all_mask_images'
     img_size = (256, 256)
     num_classes = 1
-    batch_size = 16
+    batch_size = 8
 
     train_generator, val_generator = create_image_to_image_dataset([data_dir, mask_dir],
                                                                    aug_extension=[lambda
@@ -103,47 +103,27 @@ if __name__ == '__main__':
 
     # test_generator("../results/test", train_generator, 500)
     # test_generator("../results/test/val", val_generator, 500)
-    # Build model
     model = get_unet_model(img_size, num_classes)
     # model.summary()
 
-    model.compile(optimizer="rmsprop", loss="binary_crossentropy")
+    model.compile(optimizer="rmsprop", loss="binary_crossentropy", metrics=['accuracy'])
 
-    callbacks = [
-        keras.callbacks.ModelCheckpoint("../models/unet/best_model.h5", save_best_only=True)
-    ]
+    callbacks = get_default_callbacks("../models/unet", val_generator, model)
 
-    epochs = 30
-    history = model.fit(train_generator, epochs=epochs, validation_data=val_generator, callbacks=callbacks)
-    plot_graphs(history.history)
-    model.load_weights("../models/unet/best_model.h5")
+    # epochs = 1
+    # history = model.fit(train_generator, epochs=epochs, validation_data=val_generator, callbacks=callbacks)
+    # plot_graphs(history.history)
+    model.load_weights("../models/unet/model020822:01.h5")
 
-    true_imgs = []
-    real_masks = []
-    batch_index = 0
-    total = len(val_generator)
-
-    for data in val_generator:
-        true_imgs.extend(list(data[0]))
-        real_masks.extend(list(data[1]))
-        batch_index = batch_index + 1
-        if batch_index > total:
-            break
-    real_masks = np.asarray(real_masks)
+    true_imgs, real_masks = get_gen_images(val_generator, 100)
     predicted_masks = model.predict(real_masks)
-    true_imgs = true_imgs[:len(predicted_masks)]
-    # validation score
-    # predicted_masks = np.reshape(predicted_masks, predicted_masks.shape[:-1])
     predicted_masks = simple_boundary(predicted_masks)
-    imgs = []
-    for im, im2, im3 in zip(true_imgs, real_masks, predicted_masks):
-        img = np.hstack([im, im2, im3])
-        imgs.append(img)
-    imgs = np.asarray(imgs)
+    imgs = np.concatenate([true_imgs, real_masks, predicted_masks], axis=2)
     save_images(imgs, "../results/unet/debug_imgs")
-    true_imgs = np.asarray(true_imgs).flatten().astype(dtype=np.float32)
-    print(f1_m(true_imgs, predicted_masks.flatten()))
-    print(np.sum(np.abs(true_imgs - predicted_masks.flatten())) / true_imgs.shape[0])
+    true_imgs = true_imgs.flatten().astype(dtype=np.float32)
+    predicted_masks = predicted_masks.flatten()
+    print(f1_m(true_imgs, predicted_masks))
+    print(np.sum(np.abs(true_imgs - predicted_masks)) / true_imgs.shape[0])
 
     # compare
     # recursive_read_operate_save(input_dir, "../unet/result_images", check_model(model, simple_boundary))

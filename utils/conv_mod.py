@@ -4,11 +4,12 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
+
+import tensorflow as tf
 from tensorflow.keras import backend as K
 from tensorflow.keras import initializers, regularizers, constraints
 from tensorflow.keras.layers import Layer, InputSpec
 from tensorflow.python.keras.utils import conv_utils
-import tensorflow as tf
 
 
 class Conv2DMod(Layer):
@@ -129,34 +130,23 @@ class Conv2DMod(Layer):
         return dict(list(base_config.items()) + list(config.items()))
 
     def call_for_cpu(self, inputs, **kwargs):
-        # To channels last
         x = inputs[0]
 
-        # Get weight and bias modulations
-        # Make sure w's shape is compatible with self.kernel
         w = K.expand_dims(K.expand_dims(K.expand_dims(inputs[1], axis=1), axis=1), axis=-1)
-        # Add minibatch layer to weights
         wo = K.expand_dims(self.kernel, axis=0)
-        # Modulate
+
         weights = wo * (w + 1)
-        # Demodulate
         if self.demod:
             d = K.sqrt(K.sum(K.square(weights), axis=[1, 2, 3], keepdims=True) + 1e-8)
             weights = weights / d
 
-        # Reshape/scale input
-        x = tf.transpose(x, [0, 3, 1, 2])
-        x = tf.reshape(x, [1, -1, x.shape[2], x.shape[3]])
-        x = tf.transpose(x, [0, 2, 3, 1])
-        w = tf.reshape(tf.transpose(weights, [1, 2, 3, 0, 4]),
-                       [weights.shape[1], weights.shape[2], weights.shape[3], -1])
+        x = tf.expand_dims(x, axis=1)
 
-        x = tf.nn.conv2d(x, w,
-                         strides=self.strides,
-                         padding="SAME",
-                         data_format="NHWC")
-        # Reshape/scale output.
-        x = tf.transpose(x, [0, 3, 1, 2])
-        x = tf.reshape(x, [-1, self.filters, x.shape[2], x.shape[3]])
-        x = tf.transpose(x, [0, 2, 3, 1])
-        return x
+        def fn(inp):
+            return tf.nn.conv2d(inp[0], inp[1],
+                                strides=self.strides,
+                                padding="SAME")
+
+        res = tf.map_fn(fn, (x, weights), parallel_iterations=x.shape[0], fn_output_signature=tf.float32)
+
+        return tf.squeeze(res, axis=1)

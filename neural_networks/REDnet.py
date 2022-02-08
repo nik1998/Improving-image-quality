@@ -83,7 +83,7 @@ if __name__ == "__main__":
     # autoencoder.summary()
     # autoencoder.load_weights("../models/rednet/model013020:09.h5")
 
-    callbacks = get_callbacks("../models/rednet", image_to_image_predict(train_generator, autoencoder))
+    callbacks = get_default_callbacks("../models/rednet", train_generator, autoencoder)
 
     history = autoencoder.fit(train_generator, epochs=10, validation_data=val_generator, callbacks=callbacks)
 

@@ -354,7 +354,7 @@ def process_real_frame(gen, images, output_path='../results/scan_results/', stdN
     return np.asarray(res)
 
 
-def image_to_image_predict(gen, model):
+def _image_to_image_func(gen, model):
     def f():
         train_x, *_ = gen.next()
         train_x = train_x[:4]
@@ -370,7 +370,7 @@ class ImageMonitor(keras.callbacks.Callback):
         self.train_pred_func = train_pred_func
 
     def on_epoch_end(self, epoch, logs=None):
-        fig, ax = plt.subplots(4, 2, figsize=(12, 12))
+        fig, ax = plt.subplots(4, 2, figsize=(20, 20))
         fig.suptitle("Epoch " + str(epoch))
         train_x, prediction = self.train_pred_func()
         for i, (img, pred) in enumerate(zip(train_x, prediction)):
@@ -384,6 +384,10 @@ class ImageMonitor(keras.callbacks.Callback):
             ax[i, 1].axis("off")
         plt.show()
         plt.close()
+
+
+def get_default_callbacks(save_url, gen, model, save_weights_only=True, custom_save=False, monitor_loss='val_loss'):
+    return get_callbacks(save_url, _image_to_image_func(gen, model), save_weights_only, custom_save, monitor_loss)
 
 
 def get_callbacks(save_url, train_pred_func, save_weights_only=True, custom_save=False, monitor_loss='val_loss'):
