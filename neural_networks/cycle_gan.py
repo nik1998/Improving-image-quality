@@ -433,10 +433,10 @@ def generate_for_layer(cycle_gan_model, image_path, atob=True):
 mode_test = True
 if __name__ == '__main__':
     model = get_cycleGAN()
-    train_generator, val_generator = create_image_to_image_dataset([imageA_path, imageB_path],
-                                                                   batch_size=batch_size,
-                                                                   im_size=im_size,
-                                                                   different_seed=True, stdNorm=True)
+    train_generator, val_generator = create_image_to_image_generator([imageA_path, imageB_path],
+                                                                     batch_size=batch_size,
+                                                                     im_size=im_size,
+                                                                     different_seed=True, stdNorm=True)
     # test_generator("../results/test", train_A, stdNorm=True)
     # test_generator("../results/test", UnionGenerator([val_A, val_B]), stdNorm=True)
     if mode_test:

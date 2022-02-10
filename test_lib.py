@@ -323,7 +323,7 @@ def create_unet_dataset():
     prepare_dataset("datasets/unet/want_to_split/clear_masks", 'datasets/unet/all_mask_images/train/', 256, step=256,
                     drop=0,
                     determined=True)
-    train_generator, val_generator = create_image_to_image_dataset(
+    train_generator, val_generator = create_image_to_image_generator(
         ['datasets/unet/all_real_images', 'datasets/unet/all_mask_images'], im_size=256)
     test_generator("results/test", train_generator, 200)
     test_generator("results/test", val_generator, 200)
@@ -338,7 +338,7 @@ if __name__ == '__main__':
     # recursive_read_operate_save('datasets/cycle/sem_to_sem/imgsA/train', 'datasets/one_layer_images/splited1/train', simple_threshold, False)
 
     # prepare_dataset('datasets/one_layer_images/want_to_split_bin', 'datasets/one_layer_images/splited1/train', 256, step=256, drop=0)
-    train_generator, val_generator = create_image_to_image_dataset(
+    train_generator, val_generator = create_image_to_image_generator(
         ['datasets/unet/all_real_images', 'datasets/unet/all_mask_images'], im_size=256)
     test_generator("results/test", train_generator, 200)
     test_generator("results/test", val_generator, 200)

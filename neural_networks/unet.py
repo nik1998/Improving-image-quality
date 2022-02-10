@@ -89,31 +89,32 @@ def f1_m(y_true, y_pred):
 
 if __name__ == '__main__':
     keras.backend.clear_session()
-    data_dir = '../datasets/unet/all_real_images'
-    mask_dir = '../datasets/unet/all_mask_images'
+    data_dir = '../datasets/unet/small_scale/all_real_images'
+    mask_dir = '../datasets/unet/small_scale/all_mask_images'
     img_size = (256, 256)
     num_classes = 1
     batch_size = 8
 
-    train_generator, val_generator = create_image_to_image_dataset([data_dir, mask_dir],
-                                                                   aug_extension=[lambda
+    train_generator, val_generator = create_image_to_image_generator([data_dir, mask_dir],
+                                                                     aug_extension=[lambda
                                                                                       aug: aug.add_median_blur().add_gaussian_blur()],
-                                                                   batch_size=batch_size,
-                                                                   im_size=img_size[0])
+                                                                     batch_size=batch_size,
+                                                                     im_size=img_size[0])
 
     # test_generator("../results/test", train_generator, 500)
     # test_generator("../results/test/val", val_generator, 500)
     model = get_unet_model(img_size, num_classes)
     # model.summary()
+    # print(check_not_interception(train_generator.generators[0].filenames,train_generator.generators[1].filenames))
 
     model.compile(optimizer="rmsprop", loss="binary_crossentropy", metrics=['accuracy'])
 
     callbacks = get_default_callbacks("../models/unet", val_generator, model)
 
-    # epochs = 1
-    # history = model.fit(train_generator, epochs=epochs, validation_data=val_generator, callbacks=callbacks)
-    # plot_graphs(history.history)
-    model.load_weights("../models/unet/model020822:01.h5")
+    epochs = 20
+    history = model.fit(train_generator, epochs=epochs, validation_data=val_generator, callbacks=callbacks)
+    plot_graphs(history.history)
+    # model.load_weights("../models/unet/model020822:01.h5")
 
     true_imgs, real_masks = get_gen_images(val_generator, 100)
     predicted_masks = model.predict(real_masks)

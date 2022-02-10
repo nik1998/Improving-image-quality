@@ -1,4 +1,8 @@
+import time
 from math import floor, log2
+from random import random
+
+import numpy as np
 from tensorflow.keras.initializers import *
 from tensorflow.keras.layers import *
 from tensorflow.keras.models import *
@@ -7,9 +11,6 @@ from tensorflow.keras.optimizers import *
 from utils.conv_mod import *
 from utils.mykeras_utils import AugmentationUtils
 from utils.mylibrary import concat_clip_save
-from random import random
-import numpy as np
-import time
 
 im_size = 256
 im_channel = 1
@@ -68,6 +69,19 @@ def crop_to_fit(x):
     return x[0][:, :height, :width, :]
 
 
+# Lambdas
+def crop_with_interpolate(x):
+    height = x[1].shape[1]
+    out = x[0]
+    sz = out.shape[1]
+    while sz > height:
+        # out = tf.reshape(out, [-1, sz // 2, 2, sz // 2, 2, 1])
+        # out = tf.reduce_mean(out, axis=[2, 4])
+        out = tf.keras.layers.AveragePooling2D(pool_size=(2, 2), strides=(2, 2))(out)
+        sz = sz // 2
+    return out
+
+
 def upsample(x):
     return K.resize_images(x, 2, 2, "channels_last", interpolation='bilinear')
 
@@ -88,7 +102,7 @@ def g_block(inp, istyle, inoise, fil, u=True):
 
     rgb_style = Dense(fil, kernel_initializer=VarianceScaling(200 / out.shape[2]))(istyle)
     style = Dense(inp.shape[-1], kernel_initializer='he_uniform')(istyle)
-    delta = Lambda(crop_to_fit)([inoise, out])
+    delta = Lambda(crop_with_interpolate)([inoise, out])
     d = Dense(fil, kernel_initializer='zeros')(delta)
 
     out = Conv2DMod(filters=fil, kernel_size=3, padding='same', kernel_initializer='he_uniform')([out, style])
@@ -129,7 +143,7 @@ def to_rgb(inp, style):
 
 class GAN(object):
 
-    def __init__(self, steps=1, lr=0.0001):
+    def __init__(self, steps=1, lr=0.0001, inverse=False):
 
         # Models
         self.D = None
@@ -143,7 +157,7 @@ class GAN(object):
         self.LR = lr
         self.steps = steps
         self.beta = 0.999
-
+        self.inverse = inverse
         # Init Models
         self.discriminator()
         self.generator()
@@ -212,8 +226,6 @@ class GAN(object):
         for i in range(n_layers):
             inp_style.append(Input([512]))
 
-        inp_noise = Input([im_size, im_size, 1])
-
         # Latent
         x = Lambda(lambda x: x[:, :1] * 0 + 1)(inp_style[0])
 
@@ -223,34 +235,67 @@ class GAN(object):
         x = Dense(4 * 4 * 4 * cha, activation='relu', kernel_initializer='random_normal')(x)
         x = Reshape([4, 4, 4 * cha])(x)
 
-        x, r = g_block(x, inp_style[0], inp_noise, 32 * cha, u=False)  # 4
-        outs.append(r)
+        if not self.inverse:
+            inp_noise = Input([im_size, im_size, 1])
 
-        x, r = g_block(x, inp_style[1], inp_noise, 16 * cha)  # 8
-        outs.append(r)
+            x, r = g_block(x, inp_style[0], inp_noise, 32 * cha, u=False)  # 4
+            outs.append(r)
 
-        x, r = g_block(x, inp_style[2], inp_noise, 8 * cha)  # 16
-        outs.append(r)
+            x, r = g_block(x, inp_style[1], inp_noise, 16 * cha)  # 8
+            outs.append(r)
 
-        x, r = g_block(x, inp_style[3], inp_noise, 6 * cha)  # 32
-        outs.append(r)
+            x, r = g_block(x, inp_style[2], inp_noise, 8 * cha)  # 16
+            outs.append(r)
 
-        x, r = g_block(x, inp_style[4], inp_noise, 4 * cha)  # 64
-        outs.append(r)
+            x, r = g_block(x, inp_style[3], inp_noise, 6 * cha)  # 32
+            outs.append(r)
 
-        x, r = g_block(x, inp_style[5], inp_noise, 2 * cha)  # 128
-        outs.append(r)
+            x, r = g_block(x, inp_style[4], inp_noise, 4 * cha)  # 64
+            outs.append(r)
 
-        x, r = g_block(x, inp_style[6], inp_noise, 1 * cha)  # 256
-        outs.append(r)
+            x, r = g_block(x, inp_style[5], inp_noise, 2 * cha)  # 128
+            outs.append(r)
 
-        x = add(outs)
+            x, r = g_block(x, inp_style[6], inp_noise, 1 * cha)  # 256
+            outs.append(r)
 
-        # Use values centered around 0, but normalize to [0, 1], providing better initialization
-        x = Lambda(lambda y: y / 2 + 0.5)(x)
+            x = add(outs)
 
-        self.G = Model(inputs=inp_style + [inp_noise], outputs=x)
+            # Use values centered around 0, but normalize to [0, 1], providing better initialization
+            x = Lambda(lambda y: y / 2 + 0.5)(x)
 
+            self.G = Model(inputs=inp_style + [inp_noise], outputs=x)
+        else:
+            inp_noise = []
+            for i in range(n_layers):
+                inp_noise.append(Input([im_size, im_size, 1]))
+
+            x, r = g_block(x, inp_style[0], inp_noise[0], 32 * cha, u=False)  # 4
+            outs.append(r)
+
+            x, r = g_block(x, inp_style[1], inp_noise[1], 16 * cha)  # 8
+            outs.append(r)
+
+            x, r = g_block(x, inp_style[2], inp_noise[2], 8 * cha)  # 16
+            outs.append(r)
+
+            x, r = g_block(x, inp_style[3], inp_noise[3], 6 * cha)  # 32
+            outs.append(r)
+
+            x, r = g_block(x, inp_style[4], inp_noise[4], 4 * cha)  # 64
+            outs.append(r)
+
+            x, r = g_block(x, inp_style[5], inp_noise[5], 2 * cha)  # 128
+            outs.append(r)
+
+            x, r = g_block(x, inp_style[6], inp_noise[6], 1 * cha)  # 256
+            outs.append(r)
+
+            x = add(outs)
+
+            # Use values centered around 0, but normalize to [0, 1], providing better initialization
+            x = Lambda(lambda y: y / 2 + 0.5)(x)
+            self.G = Model(inputs=inp_style + inp_noise, outputs=x)
         return self.G
 
     def GenModel(self):
@@ -264,12 +309,16 @@ class GAN(object):
             inp_style.append(Input([latent_size]))
             style.append(self.S(inp_style[-1]))
 
-        inp_noise = Input([im_size, im_size, 1])
-
-        gf = self.G(style + [inp_noise])
-
-        self.GM = Model(inputs=inp_style + [inp_noise], outputs=gf)
-
+        if not self.inverse:
+            inp_noise = Input([im_size, im_size, 1])
+            gf = self.G(style + [inp_noise])
+            self.GM = Model(inputs=inp_style + [inp_noise], outputs=gf)
+        else:
+            inp_noise = []
+            for i in range(n_layers):
+                inp_noise.append(Input([im_size, im_size, 1]))
+            gf = self.GE(style + inp_noise)
+            self.GM = Model(inputs=inp_style + inp_noise, outputs=gf)
         return self.GM
 
     def GenModelA(self):
@@ -283,12 +332,18 @@ class GAN(object):
             inp_style.append(Input([latent_size]))
             style.append(self.SE(inp_style[-1]))
 
-        inp_noise = Input([im_size, im_size, 1])
+        if not self.inverse:
+            inp_noise = Input([im_size, im_size, 1])
 
-        gf = self.GE(style + [inp_noise])
+            gf = self.GE(style + [inp_noise])
 
-        self.GMA = Model(inputs=inp_style + [inp_noise], outputs=gf)
-
+            self.GMA = Model(inputs=inp_style + [inp_noise], outputs=gf)
+        else:
+            inp_noise = []
+            for i in range(n_layers):
+                inp_noise.append(Input([im_size, im_size, 1]))
+            gf = self.GE(style + inp_noise)
+            self.GMA = Model(inputs=inp_style + inp_noise, outputs=gf)
         return self.GMA
 
     def EMA(self):
@@ -319,10 +374,10 @@ class GAN(object):
 
 class StyleGAN(object):
 
-    def __init__(self, generator, steps=1, lr=0.0001, silent=True):
+    def __init__(self, generator=None, steps=1, lr=0.0001, silent=True, inverse=False):
 
         # Init GAN and Eval Models
-        self.GAN = GAN(steps=steps, lr=lr)
+        self.GAN = GAN(steps=steps, lr=lr, inverse=True)
         self.GAN.GenModel()
         self.GAN.GenModelA()
 
@@ -494,28 +549,6 @@ class StyleGAN(object):
         generated_images = self.GAN.GMA.predict(latent + [nImage(64)], batch_size=BATCH_SIZE)
 
         concat_clip_save(generated_images, "../results/styleGAN/i" + str(num) + "-mr.png", 8)
-
-    def generateTruncated(self, style, noi=None, trunc=0.5, outImage=False, avg=False, num=0, rim=8):
-
-        if avg:
-            av = np.mean(self.GAN.S.predict(noise(2000), batch_size=64), axis=0, keepdims=True)
-        else:
-            av = np.zeros((1, latent_size))
-        if noi is None:
-            noi = nImage(64)
-
-        w_space = []
-        for i in range(len(style)):
-            tempStyle = self.GAN.S.predict(style[i])
-            tempStyle = (1 - trunc) * tempStyle + trunc * av
-            w_space.append(tempStyle)
-
-        generated_images = self.GAN.GE.predict(w_space + [noi], batch_size=BATCH_SIZE)
-
-        if outImage:
-            concat_clip_save(generated_images, "../results/styleGAN/t" + str(num) + ".png", rim)
-
-        return generated_images
 
     def saveModel(self, model, name, num):
         json = model.to_json()

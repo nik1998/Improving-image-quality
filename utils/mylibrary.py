@@ -245,6 +245,7 @@ def simple_boundary(img):
 def check_not_interception(arr1, arr2):
     s = set(arr1)
     for e in arr2:
-        if e in s:
+        if e not in s:
+            print(e)
             return False
     return True

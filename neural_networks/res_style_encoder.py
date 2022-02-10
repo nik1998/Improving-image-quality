@@ -220,10 +220,10 @@ if __name__ == "__main__":
     im_size = 256
     im_channels = 1
 
-    train_generator, val_generator = create_image_to_image_dataset([style_dir, content_dir],
-                                                                   batch_size=batch_size,
-                                                                   im_size=im_size,
-                                                                   different_seed=True)
+    train_generator, val_generator = create_image_to_image_generator([style_dir, content_dir],
+                                                                     batch_size=batch_size,
+                                                                     im_size=im_size,
+                                                                     different_seed=True)
 
     test_generator("../results/test", train_generator, count=100)
     autoencoder = StyleNet(im_shape=(im_size, im_size, im_channels), num_layers=10, channels=im_channels,

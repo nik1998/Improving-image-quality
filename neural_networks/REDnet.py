@@ -59,10 +59,10 @@ if __name__ == "__main__":
     im_size = 256
     im_channels = 1
 
-    train_generator, val_generator = create_image_to_image_dataset([image_dir, image_dir],
-                                                                   aug_extension=[noise_function],
-                                                                   batch_size=batch_size,
-                                                                   im_size=im_size)
+    train_generator, val_generator = create_image_to_image_generator([image_dir, image_dir],
+                                                                     aug_extension=[noise_function],
+                                                                     batch_size=batch_size,
+                                                                     im_size=im_size)
 
     test_generator("../results/test", train_generator, 100)
 
