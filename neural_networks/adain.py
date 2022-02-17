@@ -1,45 +1,28 @@
-from datetime import datetime
-
 from tensorflow.python.keras.callbacks import ReduceLROnPlateau
 
 from utils.mykeras_utils import *
 
-log_dir = "../models/arbitary2/enc_dec/model"
-lr = 1e-4
-lr_decay = 5e-5
-image_size = 128
-batch_size = 8
-style_weight = 4
-orig_img_size = (image_size, image_size)
-alpha = 1.0
-epoch = 150
 
-style_dir = "../datasets/unet/images"
-content_dir = "../datasets/unet/mask"
-
-
-def get_encoder():
-    vgg19 = keras.applications.VGG19(
-        include_top=False, weights="imagenet", input_shape=(*orig_img_size, 3),
-    )
+def get_encoder(input_img_size):
+    vgg19 = keras.applications.VGG19(include_top=False, weights="imagenet", input_shape=input_img_size)
     vgg19.trainable = False
     mini_vgg19 = keras.Model(vgg19.input, vgg19.get_layer("block4_conv1").output)
 
-    inputs = layers.Input([*orig_img_size, 3])
+    inputs = layers.Input(input_img_size)
     mini_vgg19_out = mini_vgg19(inputs)
     return keras.Model(inputs, mini_vgg19_out, name="mini_vgg19")
 
 
 def get_mean_std(x, epsilon=1e-5):
     axes = [1, 2]
-
-    # Compute the mean and standard deviation of a tensor.
     mean, variance = tf.nn.moments(x, axes=axes, keepdims=True)
     standard_deviation = tf.sqrt(variance + epsilon)
     return mean, standard_deviation
 
 
-def ada_in(style, content, alpha=1.0):
+def ada_in(style, content, alpha=1.0, batch=None):
+    if batch is not None:
+        return batch(content)
     content_mean, content_std = get_mean_std(content)
     style_mean, style_std = get_mean_std(style)
     t = style_std * (content - content_mean) / content_std + style_mean
@@ -75,16 +58,14 @@ def get_decoder():
     return decoder
 
 
-def get_style_vgg():
-    vgg19 = keras.applications.VGG19(
-        include_top=False, weights="imagenet", input_shape=(*orig_img_size, 3)
-    )
+def get_style_vgg(input_img_size):
+    vgg19 = keras.applications.VGG19(include_top=False, weights="imagenet", input_shape=input_img_size)
     vgg19.trainable = False
     layer_names = ["block1_conv1", "block2_conv1", "block3_conv1", "block4_conv1"]
     outputs = [vgg19.get_layer(name).output for name in layer_names]
     mini_vgg19 = keras.Model(vgg19.input, outputs)
 
-    inputs = layers.Input([*orig_img_size, 3])
+    inputs = layers.Input(input_img_size)
     mini_vgg19_out = mini_vgg19(inputs)
     return keras.Model(inputs, mini_vgg19_out, name="loss_net")
 
@@ -105,202 +86,123 @@ def gram_style_loss(base_style, target_style):
 class NeuralStyleTransfer(tf.keras.Model):
     def __init__(self, encoder, decoder, loss_net, style_weight, alpha=1.0, **kwargs):
         super().__init__(**kwargs)
+        self.loss_fn = None
+        self.optimizer = None
         self.encoder = encoder
         self.decoder = decoder
         self.loss_net = loss_net
         self.style_weight = style_weight
         self.alpha = alpha
+        self.identity_loss_fn = keras.losses.MeanAbsoluteError()
+        self.batch = layers.BatchNormalization()
 
     def compile(self, optimizer, loss_fn):
         super().compile()
         self.optimizer = optimizer
         self.loss_fn = loss_fn
-        self.style_loss_tracker = keras.metrics.Mean(name="style_loss")
-        self.content_loss_tracker = keras.metrics.Mean(name="content_loss")
-        self.total_loss_tracker = keras.metrics.Mean(name="total_loss")
 
     def call(self, input_tensor, mask=None, **kwargs):
         pass
 
-    def predict(self, input_tensor, **kwargs):
+    def predict(self, input_tensor):
         style, content = input_tensor
-        # Encode the style and content image.
         style_encoded = self.encoder(style)
         content_encoded = self.encoder(content)
 
-        # Compute the AdaIN target feature maps.
-        t = ada_in(style=style_encoded, content=content_encoded, alpha=self.alpha)
+        t = ada_in(style=style_encoded, content=content_encoded, alpha=self.alpha, batch=self.batch)
         reconstructed_image = self.decoder(t)
         return reconstructed_image
 
-    def train_step(self, inputs):
+    def get_losses(self, inputs):
         style, content = inputs
-
-        # Initialize the content and style loss.
-        loss_content = 0.0
-        loss_style = 0.0
-
-        with tf.GradientTape() as tape:
-            # Encode the style and content image.
-            style_encoded = self.encoder(style)
-            content_encoded = self.encoder(content)
-
-            # Compute the AdaIN target feature maps.
-            t = ada_in(style=style_encoded, content=content_encoded, alpha=self.alpha)
-
-            # Generate the neural style transferred image.
-            reconstructed_image = self.decoder(t)
-
-            # Compute the losses.
-            reconstructed_vgg_features = self.loss_net(reconstructed_image)
-            style_vgg_features = self.loss_net(style)
-            loss_content = self.loss_fn(t, reconstructed_vgg_features[-1])
-            for inp, out in zip(style_vgg_features, reconstructed_vgg_features):
-                mean_inp, std_inp = get_mean_std(inp)
-                mean_out, std_out = get_mean_std(out)
-                loss_style += self.loss_fn(mean_inp, mean_out) + self.loss_fn(std_inp, std_out)
-            loss_style = self.style_weight * loss_style
-            total_loss = loss_content + loss_style
-
-        # Compute gradients and optimize the decoder.
-        trainable_vars = self.decoder.trainable_variables
-        gradients = tape.gradient(total_loss, trainable_vars)
-        self.optimizer.apply_gradients(zip(gradients, trainable_vars))
-
-        # Update the trackers.
-        self.style_loss_tracker.update_state(loss_style)
-        self.content_loss_tracker.update_state(loss_content)
-        self.total_loss_tracker.update_state(total_loss)
-        return {
-            "style_loss": self.style_loss_tracker.result(),
-            "content_loss": self.content_loss_tracker.result(),
-            "total_loss": self.total_loss_tracker.result(),
-        }
-
-    def test_step(self, inputs):
-        style, content = inputs
-
-        # Initialize the content and style loss.
-        loss_content = 0.0
-        loss_style = 0.0
 
         # Encode the style and content image.
         style_encoded = self.encoder(style)
         content_encoded = self.encoder(content)
 
         # Compute the AdaIN target feature maps.
-        t = ada_in(style=style_encoded, content=content_encoded, alpha=self.alpha)
+        t = ada_in(style=style_encoded, content=content_encoded, alpha=self.alpha, batch=self.batch)
 
         # Generate the neural style transferred image.
         reconstructed_image = self.decoder(t)
-
         # Compute the losses.
-        recons_vgg_features = self.loss_net(reconstructed_image)
+        reconstructed_vgg_features = self.loss_net(reconstructed_image)
         style_vgg_features = self.loss_net(style)
-        loss_content = self.loss_fn(t, recons_vgg_features[-1])
-        for inp, out in zip(style_vgg_features, recons_vgg_features):
+        content_loss = self.loss_fn(t, reconstructed_vgg_features[-1])
+        style_loss = 0.0
+        for inp, out in zip(style_vgg_features, reconstructed_vgg_features):
             mean_inp, std_inp = get_mean_std(inp)
             mean_out, std_out = get_mean_std(out)
-            loss_style += self.loss_fn(mean_inp, mean_out) + self.loss_fn(
-                std_inp, std_out
-            )
-        loss_style = self.style_weight * loss_style
-        total_loss = loss_content + loss_style
-
-        # Update the trackers.
-        self.style_loss_tracker.update_state(loss_style)
-        self.content_loss_tracker.update_state(loss_content)
-        self.total_loss_tracker.update_state(total_loss)
+            style_loss += self.loss_fn(mean_inp, mean_out) + self.loss_fn(std_inp, std_out)
+        style_loss = self.style_weight * style_loss
+        identity_loss = self.identity_loss_fn(self.decoder(content_encoded), content) * 100
+        total_loss = content_loss + style_loss + identity_loss
         return {
-            "style_loss": self.style_loss_tracker.result(),
-            "content_loss": self.content_loss_tracker.result(),
-            "total_loss": self.total_loss_tracker.result(),
+            "style_loss": style_loss,
+            "content_loss": content_loss,
+            "identity_loss": identity_loss,
+            "total_loss": total_loss,
         }
 
-    def get_model(self):
-        inputs1 = layers.Input([*orig_img_size, 3])
-        inputs2 = layers.Input([*orig_img_size, 3])
+    def train_step(self, inputs):
+        with tf.GradientTape() as tape:
+            losses = self.get_losses(inputs)
+        trainable_vars = self.decoder.trainable_variables
+        gradients = tape.gradient(losses["total_loss"], trainable_vars)
+        self.optimizer.apply_gradients(zip(gradients, trainable_vars))
+        return losses
+
+    def test_step(self, inputs):
+        return self.get_losses(inputs)
+
+    def get_model(self, input_img_size):
+        inputs1 = layers.Input(input_img_size)
+        inputs2 = layers.Input(input_img_size)
         input1 = self.encoder(inputs1)
         input2 = self.encoder(inputs2)
-        t = ada_in(style=input1, content=input2, alpha=self.alpha)
+        t = ada_in(style=input1, content=input2, alpha=self.alpha, batch=self.batch)
         x = self.decoder(t)
         return keras.Model([inputs1, inputs2], x)
 
-    @property
-    def metrics(self):
-        return [
-            self.style_loss_tracker,
-            self.content_loss_tracker,
-            self.total_loss_tracker,
-        ]
+
+def style_image_predict(gen, model):
+    def f():
+        data = gen.next()
+        prediction = model.predict(data).numpy()
+        data = np.concatenate(data, axis=1)
+        save_images(np.concatenate([data, prediction], axis=1), path="../results/style/adain/")
+        return data[:4], prediction[:4]
+
+    return f
 
 
-class TrainMonitor(tf.keras.callbacks.Callback):
+def train():
+    lr = 1e-4
+    lr_decay = 5e-5
+    im_size = 256
+    batch_size = 8
+    style_weight = 0
+    initial_img_size = (im_size, im_size, 3)
+    alpha = 0.0
+    epoch = 200
 
-    def __init__(self, test_style, test_content, alpha=1.0):
-        self.test_style = test_style
-        self.test_content = test_content
-        self.alpha = alpha
+    style_dir = "../datasets/style"
+    content_dir = '../datasets/unet/small_scale/all_real_images'
 
-    def on_epoch_end(self, epoch, logs=None):
-        test_style, test_content = self.test_style, self.test_content
-        # Encode the style and content image.
-        test_style_encoded = self.model.encoder(test_style)
-        test_content_encoded = self.model.encoder(test_content)
+    train_generator, val_generator = create_image_to_image_generator([style_dir, content_dir],
+                                                                     batch_size=batch_size,
+                                                                     im_size=im_size,
+                                                                     color_mode='rgb',
+                                                                     different_seed=True)
 
-        # Compute the AdaIN features.
-        test_t = ada_in(style=test_style_encoded, content=test_content_encoded, alpha=self.alpha)
-        test_reconstructed_image = self.model.decoder(test_t)
-
-        # Plot the Style, Content and the NST image.
-        fig, ax = plt.subplots(nrows=1, ncols=3, figsize=(20, 5))
-        ax[0].imshow(tf.keras.preprocessing.image.array_to_img(test_style[0]))
-        ax[0].set_title(f"Style: {epoch:03d}")
-
-        ax[1].imshow(tf.keras.preprocessing.image.array_to_img(test_content[0]))
-        ax[1].set_title(f"Content: {epoch:03d}")
-
-        ax[2].imshow(tf.keras.preprocessing.image.array_to_img(test_reconstructed_image[0]))
-        ax[2].set_title(f"NST: {epoch:03d}")
-
-        plt.show()
-        plt.close()
-
-
-if __name__ == "__main__":
-    aug = AugmentationUtils() \
-        .rescale() \
-        .horizontal_flip() \
-        .vertical_flip() \
-        .ninty_rotation() \
-        .validation_split()
-    train_content, val_content = aug.train_val_generator(content_dir,
-                                                         color_mode="rgb",
-                                                         target_size=orig_img_size,
-                                                         batch_size=batch_size)
-    # .add_median_blur() \
-    #   .add_gaussian_blur() \
-    aug = AugmentationUtils() \
-        .rescale() \
-        .horizontal_flip() \
-        .vertical_flip() \
-        .ninty_rotation() \
-        .validation_split()
-    train_style, val_style = aug.train_val_generator(style_dir,
-                                                     color_mode="rgb",
-                                                     target_size=orig_img_size,
-                                                     batch_size=batch_size)
-
-    train_generator = UnionGenerator([train_style, train_content])
-    val_generator = UnionGenerator([val_style, val_content])
-    test_generator("../results/test", train_generator)
+    test_generator("../results/test", train_generator, 200)
 
     optimizer = keras.optimizers.Adam(learning_rate=lr)
     loss_fn = keras.losses.MeanSquaredError()
 
-    encoder = get_encoder()
-    get_encoder().summary()
-    loss_net = get_style_vgg()
+    encoder = get_encoder(initial_img_size)
+    get_encoder(initial_img_size).summary()
+    loss_net = get_style_vgg(initial_img_size)
     decoder = get_decoder()
 
     model = NeuralStyleTransfer(
@@ -309,23 +211,22 @@ if __name__ == "__main__":
 
     model.compile(optimizer=optimizer, loss_fn=loss_fn)
 
-    # mcp_save = ModelCheckpoint('../models/adain/' + now + '.h5', save_best_only=True, monitor='val_total_loss',
-    # mode='min')
+    callbacks = get_callbacks('../models/adain/', train_pred_func=style_image_predict(val_generator, model),
+                              monitor_loss='val_total_loss')
 
-    reduce_lr = ReduceLROnPlateau(monitor='val_total_loss', factor=0.2,
-                                  patience=5, cooldown=15, verbose=1, min_lr=lr_decay)
-    # history = model.fit(
-    #     train_generator,
-    #     epochs=epoch,
-    #     validation_data=val_generator,
-    #     callbacks=[TrainMonitor(*val_generator.next(), alpha=alpha), reduce_lr],
-    # )
-    # plot_graphs(history.history)
-    now = datetime.now().strftime("%m%d%H:%M")
-    # model = model.get_model()
-    model = keras.models.load_model("../models/adain/1511w4notblur150e.h5")
-    # model.save('../models/adain/' + now + '.h5')
+    callbacks.append(ReduceLROnPlateau(monitor='val_total_loss', factor=0.2,
+                                       patience=5, cooldown=15, verbose=1, min_lr=lr_decay))
+    history = model.fit(train_generator, epochs=epoch, validation_data=val_generator, callbacks=callbacks)
+    plot_graphs(history.history)
 
     images = get_gen_images(val_generator)
-    style_images = model.predict(images)
-    unionTestImages(images[0], style_images, path="../results/style/adain")
+    stylized_images = model.predict(images)
+    rgb_weights = [0.2989, 0.5870, 0.1140]
+    images = images[0]
+    images = np.dot(images[..., :3], rgb_weights)
+    stylized_images = np.dot(stylized_images[..., :3], rgb_weights)
+    unionTestImages(images, stylized_images, path="../results/style/adain")
+
+
+if __name__ == "__main__":
+    train()

@@ -56,7 +56,10 @@ class UnionGenerator(Sequence):
     def __getitem__(self, idx):
         arrs = []
         for g in self.generators:
-            arrs.append(g.next())
+            data = g.next()
+            if len(data) < self.batch_size:
+                data = g.next()
+            arrs.append(data)
         for i in range(len(arrs[0])):
             rnd = random.randint(0, 4)
             for j in range(len(self.generators)):

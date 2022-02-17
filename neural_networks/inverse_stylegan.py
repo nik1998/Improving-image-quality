@@ -83,8 +83,8 @@ class UnionEncoder:
             # img_loss = self.square_loss(result, target)
             reg_loss = calc_reg_loss(x2)
             loss = img_loss + self.regularize_noise_weight * reg_loss
-            for x in x2:
-                loss += tf.reduce_sum(x*x)*self.regularize_weight
+            #for x in x2:
+                #loss += tf.reduce_sum(x*x)*self.regularize_weight
         print(loss)
         grad1 = g.gradient(loss, x1)
         self.opt.apply_gradients(zip(grad1, x1))
