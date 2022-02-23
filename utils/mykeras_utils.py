@@ -2,6 +2,7 @@ from datetime import datetime
 from datetime import timedelta
 
 import tensorflow as tf
+from keras import backend as K
 from keras.applications.inception_v3 import InceptionV3
 from keras.preprocessing.image import ImageDataGenerator
 from scipy import linalg
@@ -49,6 +50,7 @@ class UnionGenerator(Sequence):
         self.generators = generators
         self.operators = []
         self.batch_size = generators[0].batch_size
+        self.samples = generators[0].samples
 
     def __len__(self):
         return self.generators[0].samples // self.generators[0].batch_size
@@ -60,17 +62,32 @@ class UnionGenerator(Sequence):
             if len(data) < self.batch_size:
                 data = g.next()
             arrs.append(data)
-        for i in range(len(arrs[0])):
-            rnd = random.randint(0, 4)
-            for j in range(len(self.generators)):
-                for f in self.operators:
-                    arrs[j][i] = f(arrs[j][i], rnd)
+        for f in self.operators:
+            arrs = f(arrs)
         return tuple(arrs)
 
     def ninty_rotate(self):
-        def f(img, rnd):
-            im = np.rot90(img, k=rnd)
-            return im
+        def f(data):
+            for i in range(len(data[0])):
+                rnd = random.randint(0, 4)
+                for j in range(len(data)):
+                    data[j][i] = np.rot90(data[j][i], k=rnd)
+            return data
+
+        self.operators.append(f)
+        return self
+
+    def style_augment(self, model, style_gen):
+        def f(data):
+            rnd = random.Random()
+            pr = rnd.uniform(0.0, 1.0)
+            if pr < 0.5:
+                images = data[0]
+                style = style_gen.next()
+                imgs = np.repeat(images, 3, axis=3)
+                imgs = model.predict([imgs, style])
+                data[0] = tf.reduce_mean(imgs, axis=3, keepdims=True)
+            return data
 
         self.operators.append(f)
         return self
@@ -134,7 +151,7 @@ class AugmentationUtils:
 
         return augment
 
-    def validation_split(self, split=0.1):
+    def validation_split(self, split=0.2):
         self.params['validation_split'] = split
         return self
 
@@ -290,14 +307,13 @@ def predict_images(gen, images):
     return np.reshape(p, p.shape[:-1])
 
 
-def scan_image(gen, image, h, w, step=8, e=0.01):
+def scan_image(gen, image, img_size, step=8, e=0.01):
     imh, imw = image.shape
-    # t = [[[] for i in range(imw)] for j in range(imh)]
     p = []
     ans = np.zeros((imh, imw))
-    for i in range(0, imh - h, step):
-        for j in range(0, imw - w, step):
-            im = image[i:i + h, j:j + w]
+    for i in range(0, imh - img_size, step):
+        for j in range(0, imw - img_size, step):
+            im = image[i:i + img_size, j:j + img_size]
             p.append(im)
     p = np.asarray(p)
     start_time = time.time()
@@ -305,11 +321,11 @@ def scan_image(gen, image, h, w, step=8, e=0.01):
         p[i:i + 1024] = predict_images(gen, p[i:i + 1024])
     cnt = 0
     summ = np.zeros((imh, imw))
-    s = np.ones((h, w))
-    for i in range(0, imh - h, step):
-        for j in range(0, imw - w, step):
-            ans[i:i + h, j:j + w] += p[cnt]
-            summ[i:i + h, j:j + w] += s
+    s = np.ones((img_size, img_size))
+    for i in range(0, imh - img_size, step):
+        for j in range(0, imw - img_size, step):
+            ans[i:i + img_size, j:j + img_size] += p[cnt]
+            summ[i:i + img_size, j:j + img_size] += s
             cnt += 1
     summ = summ.astype(np.float)
     ans = np.divide(ans, summ)
@@ -322,39 +338,39 @@ def scan_image(gen, image, h, w, step=8, e=0.01):
 
 
 def test_real_frame(model_path, image_path, model=None, output_path='../results/scan_results/', stdNorm=False,
-                    interpolate=False):
+                    interpolate=False, img_size=128, post_process_func=None):
     if model is None:
-        gen = keras.models.load_model(model_path)
+        model = keras.models.load_model(model_path)
     else:
-        gen = model.load_weights(model_path)
+        model.load_weights(model_path)
     images = read_dir(image_path, 0, 0)
     imageNames = os.listdir(image_path)
-    return process_real_frame(gen, images, output_path=output_path, stdNorm=stdNorm, interpolate=interpolate,
-                              imageNames=imageNames)
+    process_real_frame(model, images, output_path=output_path, stdNorm=stdNorm, interpolate=interpolate,
+                       imageNames=imageNames, img_size=img_size, post_process_func=post_process_func)
 
 
 def process_real_frame(gen, images, output_path='../results/scan_results/', stdNorm=False, interpolate=False,
-                       imageNames=None):
-    res = []
-    for image in images:
+                       imageNames=None, img_size=128, post_process_func=None):
+    for i, image in enumerate(images):
         if stdNorm:
             image = std_norm_x(image)
         if not interpolate:
-            ar, h, w = split_image(image, 128)
+            ar, h, w = split_image(image, img_size, img_size)
             ar = np.asarray(ar)
             p = predict_images(gen, ar)
             im = unionImage(p, h, w)
-            res.append(im)
+            res = im
         else:
-            res.append(scan_image(gen, image, 128, 128))
-    save_images(np.asarray(res), output_path, stdNorm, imageNames=imageNames)
+            res = scan_image(gen, image, img_size, step=img_size // 4)
+        if post_process_func is not None:
+            res = post_process_func(image, res)
+        save_images([res], output_path, stdNorm, imageNames=[imageNames[i]])
 
     # estimate quality
     # print(compare_images_by_function(images, res, contrast_measure))
     # print(compare_images_by_function(images, res, sharpness_measure))
     # print(compare_images_by_function(images, res, psnr, True))
     # print(compare_images_by_function(images, res, similarity, True))
-    return np.asarray(res)
 
 
 def _image_to_image_func(gen, model):
@@ -389,11 +405,13 @@ class ImageMonitor(keras.callbacks.Callback):
         plt.close()
 
 
-def get_default_callbacks(save_url, gen, model, save_weights_only=True, custom_save=False, monitor_loss='val_loss'):
-    return get_callbacks(save_url, _image_to_image_func(gen, model), save_weights_only, custom_save, monitor_loss)
+def get_default_callbacks(save_url, gen, model, save_weights_only=True, custom_save=False, monitor_loss='val_loss',
+                          mode='auto'):
+    return get_callbacks(save_url, _image_to_image_func(gen, model), save_weights_only, custom_save, monitor_loss, mode)
 
 
-def get_callbacks(save_url, train_pred_func, save_weights_only=True, custom_save=False, monitor_loss='val_loss'):
+def get_callbacks(save_url, train_pred_func, save_weights_only=True, custom_save=False, monitor_loss='val_loss',
+                  mode='auto'):
     now = datetime.now().strftime("%m%d%H:%M")
     if custom_save:
         save_url += '/model' + now
@@ -405,7 +423,7 @@ def get_callbacks(save_url, train_pred_func, save_weights_only=True, custom_save
     mcp_save = ModelCheckpoint(save_url, save_best_only=True,
                                save_weights_only=save_weights_only,
                                verbose=1,
-                               monitor=monitor_loss)
+                               monitor=monitor_loss, mode=mode)
     return [monitor, mcp_save]
 
 
@@ -524,3 +542,23 @@ def calculate_fid(real_embeddings, generated_embeddings):
         # calculate score
     fid = ssdiff + np.trace(sigma1 + sigma2 - 2.0 * covmean)
     return fid
+
+
+def recall_score(y_true, y_pred):
+    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
+    possible_positives = K.sum(K.round(K.clip(y_true, 0, 1)))
+    recall = true_positives / (possible_positives + K.epsilon())
+    return recall
+
+
+def precision_score(y_true, y_pred):
+    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
+    predicted_positives = K.sum(K.round(K.clip(y_pred, 0, 1)))
+    precision = true_positives / (predicted_positives + K.epsilon())
+    return precision
+
+
+def f1_score(y_true, y_pred):
+    precision = precision_score(y_true, y_pred)
+    recall = recall_score(y_true, y_pred)
+    return 2 * ((precision * recall) / (precision + recall + K.epsilon()))

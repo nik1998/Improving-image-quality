@@ -11,12 +11,6 @@ import numpy as np
 from sklearn.utils import shuffle
 
 
-def wrap(img, add_channels=False):
-    if add_channels:
-        img = np.expand_dims(img, axis=-1)
-    return np.asarray([img])
-
-
 def plot_graphs(history):
     for key in history:
         plt.figure()
@@ -29,13 +23,13 @@ def plot_graphs(history):
     plt.show()
 
 
-def split_image(image, x, step=128):
+def split_image(image, img_size, step=128):
     small_array = []
-    for i in range(x, image.shape[0] + 1, step):
-        for j in range(x, image.shape[1] + 1, step):
-            small_array.append(image[i - x:i, j - x:j])
-    h = image.shape[0] - image.shape[0] % x
-    w = image.shape[1] - image.shape[1] % x
+    for i in range(img_size, image.shape[0] + 1, step):
+        for j in range(img_size, image.shape[1] + 1, step):
+            small_array.append(image[i - img_size:i, j - img_size:j])
+    h = image.shape[0] - image.shape[0] % img_size
+    w = image.shape[1] - image.shape[1] % img_size
     return small_array, h, w
 
 
@@ -60,11 +54,9 @@ def prepare_dataset(image_path, output_path, imsize, step=128, drop=0.5, inmemor
             save_images(images, output_path)
 
 
-inn = 0
-
-
 def save_images(images, path, stdNorm=False, imageNames=None):
-    global inn
+    if not hasattr(save_images, "inn"):
+        save_images.inn = 0
     if not os.path.exists(path):
         os.makedirs(path)
     for i in range(len(images)):
@@ -75,8 +67,8 @@ def save_images(images, path, stdNorm=False, imageNames=None):
             img = img * 255
         # print(np.mean(img))
         if imageNames is None:
-            cv2.imwrite(os.path.join(path, "img" + str(inn) + ".png"), img)
-            inn += 1
+            cv2.imwrite(os.path.join(path, "img" + str(save_images.inn) + ".png"), img)
+            save_images.inn += 1
         else:
             cv2.imwrite(os.path.join(path, imageNames[i]), img)
 
@@ -249,3 +241,17 @@ def check_not_interception(arr1, arr2):
             print(e)
             return False
     return True
+
+
+def get_latest_filename(models_dir):
+    dir = os.listdir(models_dir)
+    maxx = 0.0
+    mfilename = ""
+    for filename in dir:
+        file_path = os.path.join(models_dir, filename)
+        time_mod = os.path.getmtime(file_path)
+        if maxx < time_mod:
+            maxx = time_mod
+            mfilename = file_path
+    print("get latest file:", mfilename)
+    return mfilename

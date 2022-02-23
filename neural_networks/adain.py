@@ -3,71 +3,18 @@ from tensorflow.python.keras.callbacks import ReduceLROnPlateau
 from utils.mykeras_utils import *
 
 
-def get_encoder(input_img_size):
-    vgg19 = keras.applications.VGG19(include_top=False, weights="imagenet", input_shape=input_img_size)
-    vgg19.trainable = False
-    mini_vgg19 = keras.Model(vgg19.input, vgg19.get_layer("block4_conv1").output)
-
-    inputs = layers.Input(input_img_size)
-    mini_vgg19_out = mini_vgg19(inputs)
-    return keras.Model(inputs, mini_vgg19_out, name="mini_vgg19")
-
-
 def get_mean_std(x, epsilon=1e-5):
-    axes = [1, 2]
-    mean, variance = tf.nn.moments(x, axes=axes, keepdims=True)
+    mean, variance = tf.nn.moments(x, axes=[1, 2], keepdims=True)
     standard_deviation = tf.sqrt(variance + epsilon)
     return mean, standard_deviation
 
 
-def ada_in(style, content, alpha=1.0, batch=None):
-    if batch is not None:
-        return batch(content)
+def ada_in(style, content, alpha=1.0):
     content_mean, content_std = get_mean_std(content)
     style_mean, style_std = get_mean_std(style)
     t = style_std * (content - content_mean) / content_std + style_mean
     t = alpha * t + (1 - alpha) * content
     return t
-
-
-def get_decoder():
-    config = {"kernel_size": 3, "strides": 1, "padding": "same", "activation": "relu"}
-    decoder = keras.Sequential(
-        [
-            layers.InputLayer((None, None, 512)),
-            layers.Conv2D(filters=512, **config),
-            layers.UpSampling2D(),
-            layers.Conv2D(filters=256, **config),
-            layers.Conv2D(filters=256, **config),
-            layers.Conv2D(filters=256, **config),
-            layers.Conv2D(filters=256, **config),
-            layers.UpSampling2D(),
-            layers.Conv2D(filters=128, **config),
-            layers.Conv2D(filters=128, **config),
-            layers.UpSampling2D(),
-            layers.Conv2D(filters=64, **config),
-            layers.Conv2D(
-                filters=3,
-                kernel_size=3,
-                strides=1,
-                padding="same",
-                activation="sigmoid",
-            ),
-        ]
-    )
-    return decoder
-
-
-def get_style_vgg(input_img_size):
-    vgg19 = keras.applications.VGG19(include_top=False, weights="imagenet", input_shape=input_img_size)
-    vgg19.trainable = False
-    layer_names = ["block1_conv1", "block2_conv1", "block3_conv1", "block4_conv1"]
-    outputs = [vgg19.get_layer(name).output for name in layer_names]
-    mini_vgg19 = keras.Model(vgg19.input, outputs)
-
-    inputs = layers.Input(input_img_size)
-    mini_vgg19_out = mini_vgg19(inputs)
-    return keras.Model(inputs, mini_vgg19_out, name="loss_net")
 
 
 def gram_matrix(input_tensor):
@@ -84,17 +31,47 @@ def gram_style_loss(base_style, target_style):
 
 
 class NeuralStyleTransfer(tf.keras.Model):
-    def __init__(self, encoder, decoder, loss_net, style_weight, alpha=1.0, **kwargs):
+    def __init__(self, initial_img_size, style_weight=4, alpha=1.0, **kwargs):
         super().__init__(**kwargs)
         self.loss_fn = None
         self.optimizer = None
-        self.encoder = encoder
-        self.decoder = decoder
-        self.loss_net = loss_net
+        self.kernel_init = keras.initializers.RandomNormal(mean=0.0, stddev=0.02)
+        self._get_style_vgg(initial_img_size)
+        self._get_decoder(self.encoder.output)
         self.style_weight = style_weight
         self.alpha = alpha
         self.identity_loss_fn = keras.losses.MeanAbsoluteError()
-        self.batch = layers.BatchNormalization()
+
+    def _get_style_vgg(self, input_img_size):
+        vgg19 = keras.applications.VGG19(include_top=False, weights="imagenet", input_shape=input_img_size)
+        vgg19.trainable = False
+        layer_names = ["block1_conv1", "block2_conv1", "block3_conv1", "block4_conv1"]
+        outputs = [vgg19.get_layer(name).output for name in layer_names]
+        self.encoder = keras.Model(vgg19.input, outputs)
+        # self.encoder.summary()
+
+    def _get_decoder(self, enc_out):
+        config = {"kernel_size": 3, "strides": 1, "padding": "same", "activation": "relu",
+                  "kernel_initializer": self.kernel_init}
+        inputs = [layers.Input(i.shape[1:]) for i in enc_out]
+        x = layers.Conv2D(filters=512, **config)(inputs[-1])
+        x = layers.Add()([x, inputs[-1]])
+        x = layers.UpSampling2D()(x)
+        x = layers.Conv2D(filters=256, **config)(x)
+        x = layers.Add()([x, inputs[-2]])
+        x = layers.Conv2D(filters=256, **config)(x)
+        x = layers.Conv2D(filters=256, **config)(x)
+        x = layers.Conv2D(filters=256, **config)(x)
+        x = layers.UpSampling2D()(x)
+        x = layers.Conv2D(filters=128, **config)(x)
+        x = layers.Add()([x, inputs[-3]])
+        x = layers.Conv2D(filters=128, **config)(x)
+        x = layers.UpSampling2D()(x)
+        x = layers.Conv2D(filters=64, **config)(x)
+        x = layers.Add()([x, inputs[-4]])
+        x = layers.Conv2D(filters=3, kernel_size=3, strides=1, padding="same", activation="sigmoid")(x)
+        self.decoder = keras.Model(inputs, x)
+        # self.decoder.summary()
 
     def compile(self, optimizer, loss_fn):
         super().compile()
@@ -105,37 +82,38 @@ class NeuralStyleTransfer(tf.keras.Model):
         pass
 
     def predict(self, input_tensor):
-        style, content = input_tensor
+        content, style = input_tensor
         style_encoded = self.encoder(style)
         content_encoded = self.encoder(content)
-
-        t = ada_in(style=style_encoded, content=content_encoded, alpha=self.alpha, batch=self.batch)
-        reconstructed_image = self.decoder(t)
-        return reconstructed_image
+        for i in range(len(content_encoded)):
+            content_encoded[i] = ada_in(style=style_encoded[i], content=content_encoded[i], alpha=self.alpha)
+        return self.decoder(content_encoded)
 
     def get_losses(self, inputs):
-        style, content = inputs
+        content, style = inputs
 
         # Encode the style and content image.
         style_encoded = self.encoder(style)
         content_encoded = self.encoder(content)
+        identity_loss = self.identity_loss_fn(self.decoder(content_encoded), content) * 100
 
         # Compute the AdaIN target feature maps.
-        t = ada_in(style=style_encoded, content=content_encoded, alpha=self.alpha, batch=self.batch)
+        for i in range(len(content_encoded)):
+            content_encoded[i] = ada_in(style=style_encoded[i], content=content_encoded[i], alpha=self.alpha)
 
         # Generate the neural style transferred image.
-        reconstructed_image = self.decoder(t)
+        reconstructed_image = self.decoder(content_encoded)
+        # identity_loss += self.identity_loss_fn(reconstructed_image[..., 0], reconstructed_image[..., 1]) * 10
+        # identity_loss += self.identity_loss_fn(reconstructed_image[..., 1], reconstructed_image[..., 2]) * 10
         # Compute the losses.
-        reconstructed_vgg_features = self.loss_net(reconstructed_image)
-        style_vgg_features = self.loss_net(style)
-        content_loss = self.loss_fn(t, reconstructed_vgg_features[-1])
+        reconstructed_vgg_features = self.encoder(reconstructed_image)
+        content_loss = self.loss_fn(content_encoded[-1], reconstructed_vgg_features[-1])
         style_loss = 0.0
-        for inp, out in zip(style_vgg_features, reconstructed_vgg_features):
+        for inp, out in zip(style_encoded, reconstructed_vgg_features):
             mean_inp, std_inp = get_mean_std(inp)
             mean_out, std_out = get_mean_std(out)
             style_loss += self.loss_fn(mean_inp, mean_out) + self.loss_fn(std_inp, std_out)
         style_loss = self.style_weight * style_loss
-        identity_loss = self.identity_loss_fn(self.decoder(content_encoded), content) * 100
         total_loss = content_loss + style_loss + identity_loss
         return {
             "style_loss": style_loss,
@@ -144,6 +122,7 @@ class NeuralStyleTransfer(tf.keras.Model):
             "total_loss": total_loss,
         }
 
+    # @tf.function(autograph=not True)
     def train_step(self, inputs):
         with tf.GradientTape() as tape:
             losses = self.get_losses(inputs)
@@ -155,14 +134,11 @@ class NeuralStyleTransfer(tf.keras.Model):
     def test_step(self, inputs):
         return self.get_losses(inputs)
 
-    def get_model(self, input_img_size):
-        inputs1 = layers.Input(input_img_size)
-        inputs2 = layers.Input(input_img_size)
-        input1 = self.encoder(inputs1)
-        input2 = self.encoder(inputs2)
-        t = ada_in(style=input1, content=input2, alpha=self.alpha, batch=self.batch)
-        x = self.decoder(t)
-        return keras.Model([inputs1, inputs2], x)
+    def save_weights(self, name, **kwargs):
+        self.decoder.save_weights(name)
+
+    def load_weights(self, name, **kwargs):
+        self.decoder.load_weights(name)
 
 
 def style_image_predict(gen, model):
@@ -178,18 +154,18 @@ def style_image_predict(gen, model):
 
 def train():
     lr = 1e-4
-    lr_decay = 5e-5
+    lr_decay = 5e-6
     im_size = 256
     batch_size = 8
-    style_weight = 0
+    style_weight = 4
     initial_img_size = (im_size, im_size, 3)
-    alpha = 0.0
-    epoch = 200
+    alpha = 0.1
+    epoch = 50
 
     style_dir = "../datasets/style"
     content_dir = '../datasets/unet/small_scale/all_real_images'
 
-    train_generator, val_generator = create_image_to_image_generator([style_dir, content_dir],
+    train_generator, val_generator = create_image_to_image_generator([content_dir, style_dir],
                                                                      batch_size=batch_size,
                                                                      im_size=im_size,
                                                                      color_mode='rgb',
@@ -199,15 +175,7 @@ def train():
 
     optimizer = keras.optimizers.Adam(learning_rate=lr)
     loss_fn = keras.losses.MeanSquaredError()
-
-    encoder = get_encoder(initial_img_size)
-    get_encoder(initial_img_size).summary()
-    loss_net = get_style_vgg(initial_img_size)
-    decoder = get_decoder()
-
-    model = NeuralStyleTransfer(
-        encoder=encoder, decoder=decoder, loss_net=loss_net, style_weight=style_weight, alpha=alpha
-    )
+    model = NeuralStyleTransfer(initial_img_size, style_weight=style_weight, alpha=alpha)
 
     model.compile(optimizer=optimizer, loss_fn=loss_fn)
 
@@ -219,12 +187,10 @@ def train():
     history = model.fit(train_generator, epochs=epoch, validation_data=val_generator, callbacks=callbacks)
     plot_graphs(history.history)
 
-    images = get_gen_images(val_generator)
+    images = get_gen_images(val_generator, 8)
     stylized_images = model.predict(images)
-    rgb_weights = [0.2989, 0.5870, 0.1140]
-    images = images[0]
-    images = np.dot(images[..., :3], rgb_weights)
-    stylized_images = np.dot(stylized_images[..., :3], rgb_weights)
+    images = rgb_to_gray(images[0])
+    stylized_images = rgb_to_gray(stylized_images)
     unionTestImages(images, stylized_images, path="../results/style/adain")
 
 

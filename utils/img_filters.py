@@ -1,11 +1,4 @@
-import math
-
-import numpy as np
-import cv2
-from matplotlib import pyplot as plt
 from utils.mylibrary import *
-from skimage.metrics import structural_similarity
-from skimage import measure
 
 
 def own_filter(image):
@@ -311,8 +304,6 @@ def adaptive_binarization_otcy(img):
     return img > max_t
 
 
-def reflect_rotate(image, rot=-1):
-    if rot == -1:
-        rot = random.randint(0, 4)
-    im = np.rot90(image, k=rot)
-    return im
+def rgb_to_gray(images):
+    rgb_weights = [0.2989, 0.5870, 0.1140]
+    return np.dot(images[..., :3], rgb_weights)

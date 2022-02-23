@@ -1,10 +1,13 @@
 from scipy.stats import norm
 from skimage.feature import hessian_matrix, hessian_matrix_eigvals
+from tqdm import tqdm
 
-from neural_networks.unet import *
+from neural_networks.adain import NeuralStyleTransfer
 from utils import canny_edge_detector as canny
+from utils.mykeras_utils import *
+from utils.noisy import noisy_with_defaults, expansion_algorithm, light_side
 from utils.regression import *
-import utils.mylibrary as lib
+
 
 def test_filters():
     width = 128
@@ -12,7 +15,7 @@ def test_filters():
     test_img = read_dir("Simple_dataset/Good", height, width, True)
     for i in range(len(test_img)):
         test_img[i] = custom_algorithm(test_img[i])
-    save_images(test_img, "Contrast_dataset/", stdNorm=False)
+    save_images(test_img, "results/contrast_dataset/", stdNorm=False)
 
 
 def enc_dec_test():
@@ -39,7 +42,7 @@ def noisy_test():
         showImage(noisy_with_defaults(test_img[i], "big_defect"))
         showImage(noisy_with_defaults(test_img[i], "light_side"))
         showImage(test_img[i])
-    save_images(test_img, "noisy_dataset/", stdNorm=False)
+    save_images(test_img, "results/noisy_dataset/", stdNorm=False)
 
 
 def final_interpolation():
@@ -139,11 +142,6 @@ def adaptive():
     cv2.imwrite('result/admedian.jpg', 255 * img)
 
 
-def global_test():
-    recursive_read_operate_save('/home/nik/images/', '/home/nik/test_square_filter2/',
-                                operate_binarization)
-
-
 def morph_repair():
     fn = 'improve/4.103 check_0477.jpg'
     img = read_image(fn)
@@ -157,35 +155,11 @@ def morph_repair():
                 255 * np.concatenate((operate_binarization(img), operate_binarization(res)), axis=1))
 
 
-def experiments():
-    fn = 'train_images/img302.png'
-    img = read_image(fn, 128, 128)
-    showImage(img)
-    # img = unsharp_masking(img, 3)
-    img = adaptive_median(img, threshold=1.0)
-    # showImage(img)
-    # ans = operate_binarization(img)
-    # showImage(ans)
-    ans = square_bin_filter(img, dsize=6, min_square=15)
-    showImage(ans)
-
-
 # https://newbedev.com/how-to-use-ridge-detection-filter-in-opencv
 def detect_ridges(gray, sigma=1.0):
     H_elems = hessian_matrix(gray, sigma=sigma, order='rc')
     maxima_ridges, minima_ridges = hessian_matrix_eigvals(H_elems)
     return maxima_ridges, minima_ridges
-
-
-def plot_images(*images):
-    images = list(images)
-    n = len(images)
-    fig, ax = plt.subplots(ncols=n, sharey=True)
-    for i, img in enumerate(images):
-        ax[i].imshow(img, cmap='gray')
-        ax[i].axis('off')
-    plt.subplots_adjust(left=0.03, bottom=0.03, right=0.97, top=0.97)
-    plt.show()
 
 
 def canny_with_morph():
@@ -199,7 +173,7 @@ def canny_with_morph():
     # ans = hessian(255*img, mode='constant')
     # showImage(ans / 255)
     a, b = detect_ridges(img, sigma=3.0)
-    plot_images(img, a, b)
+    showImage(np.concatenate([img, a, b], axis=1))
 
 
 def ridge_detector_test():
@@ -319,7 +293,7 @@ def check_sem():
 def create_unet_dataset():
     prepare_dataset("datasets/unet/want_to_split/real", 'datasets/unet/all_real_images/train/', 256, step=256, drop=0,
                     determined=True)
-    lib.inn = 0
+    save_images.inn = 0
     prepare_dataset("datasets/unet/want_to_split/clear_masks", 'datasets/unet/all_mask_images/train/', 256, step=256,
                     drop=0,
                     determined=True)
@@ -327,6 +301,32 @@ def create_unet_dataset():
         ['datasets/unet/all_real_images', 'datasets/unet/all_mask_images'], im_size=256)
     test_generator("results/test", train_generator, 200)
     test_generator("results/test", val_generator, 200)
+
+
+def test_unet():
+    from neural_networks.unet import get_unet_model
+
+    test_real_frame(get_latest_filename('models/unet/'), 'datasets/unet/test', output_path='results/unet/scan_results',
+                    model=get_unet_model((256, 256)), img_size=256,
+                    interpolate=True, post_process_func=lambda x, y: simple_boundary(y))
+
+
+def test_adain():
+    img_size = (256, 256)
+    style_model = NeuralStyleTransfer((*img_size, 3), alpha=0.01)
+    style_model.load_weights(get_latest_filename("models/adain/"))
+    aug = AugmentationUtils().rescale()
+    content = aug.create_generator('datasets/final_good_images', target_size=img_size,
+                                   color_mode='rgb')
+    style = aug.create_generator('datasets/style', target_size=img_size,
+                                 color_mode='rgb')
+    content = get_gen_images(content, 32)
+    style = get_gen_images(style, 64)
+    for i in tqdm(range(len(content))):
+        imgs = np.repeat(content[i:i + 1], 64, axis=0)
+        for j in range(0, 64, 8):
+            style_imgs = style_model.predict([imgs[j:j + 8], style[j:j + 8]])
+            save_images(np.concatenate([imgs[j:j + 8], style[j:j + 8], style_imgs], axis=2), "results/style/adain")
 
 
 if __name__ == '__main__':
@@ -338,8 +338,6 @@ if __name__ == '__main__':
     # recursive_read_operate_save('datasets/cycle/sem_to_sem/imgsA/train', 'datasets/one_layer_images/splited1/train', simple_threshold, False)
 
     # prepare_dataset('datasets/one_layer_images/want_to_split_bin', 'datasets/one_layer_images/splited1/train', 256, step=256, drop=0)
-    train_generator, val_generator = create_image_to_image_generator(
-        ['datasets/unet/all_real_images', 'datasets/unet/all_mask_images'], im_size=256)
-    test_generator("results/test", train_generator, 200)
-    test_generator("results/test", val_generator, 200)
+
+    test_unet()
     pass

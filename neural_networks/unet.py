@@ -1,7 +1,5 @@
-from keras import backend as K
-
+from neural_networks.adain import NeuralStyleTransfer
 from utils.mykeras_utils import *
-
 # os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 
@@ -9,7 +7,21 @@ physical_devices = tf.config.list_physical_devices('GPU')
 tf.config.experimental.set_memory_growth(physical_devices[0], True)
 
 
-def get_unet_model(img_size, num_classes, channels=1):
+def dice_coef(y_true, y_pred, smooth=1):
+    """
+    Dice = (2*|X & Y|)/ (|X|+ |Y|)
+         =  2*sum(|A*B|)/(sum(A^2)+sum(B^2))
+    ref: https://arxiv.org/pdf/1606.04797v1.pdf
+    """
+    intersection = K.sum(K.abs(y_true * y_pred), axis=-1)
+    return (2. * intersection + smooth) / (K.sum(K.square(y_true), -1) + K.sum(K.square(y_pred), -1) + smooth)
+
+
+def dice_coef_loss(y_true, y_pred):
+    return 1 - dice_coef(y_true, y_pred)
+
+
+def get_unet_model(img_size, num_classes=1, channels=1):
     inputs = keras.Input(shape=img_size + (channels,))
 
     ### [First half of the network: downsampling inputs] ###
@@ -59,35 +71,12 @@ def get_unet_model(img_size, num_classes, channels=1):
         x = layers.add([x, residual])  # Add back residual
         previous_block_activation = x  # Set aside next residual
 
-    # Add a per-pixel classification layer
     outputs = layers.Conv2D(num_classes, 3, activation="sigmoid", padding="same")(x)
-
-    # Define the model
     model = keras.Model(inputs, outputs)
     return model
 
 
-def recall_m(y_true, y_pred):
-    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
-    possible_positives = K.sum(K.round(K.clip(y_true, 0, 1)))
-    recall = true_positives / (possible_positives + K.epsilon())
-    return recall
-
-
-def precision_m(y_true, y_pred):
-    true_positives = K.sum(K.round(K.clip(y_true * y_pred, 0, 1)))
-    predicted_positives = K.sum(K.round(K.clip(y_pred, 0, 1)))
-    precision = true_positives / (predicted_positives + K.epsilon())
-    return precision
-
-
-def f1_m(y_true, y_pred):
-    precision = precision_m(y_true, y_pred)
-    recall = recall_m(y_true, y_pred)
-    return 2 * ((precision * recall) / (precision + recall + K.epsilon()))
-
-
-if __name__ == '__main__':
+def train():
     keras.backend.clear_session()
     data_dir = '../datasets/unet/small_scale/all_real_images'
     mask_dir = '../datasets/unet/small_scale/all_mask_images'
@@ -95,43 +84,45 @@ if __name__ == '__main__':
     num_classes = 1
     batch_size = 8
 
+    style_model = NeuralStyleTransfer((*img_size, 3), alpha=0.01)
+    style_model.load_weights(get_latest_filename("../models/adain/"))
+
+    style_gen = AugmentationUtils().horizontal_flip().vertical_flip().rescale().create_generator("../datasets/style",
+                                                                                                 batch_size=batch_size,
+                                                                                                 target_size=img_size,
+                                                                                                 color_mode='rgb')
+    extend_func = lambda aug: aug.add_median_blur(p=0.5).add_gaussian_blur(p=0.5)
+    # .add_style_network(style_model, style_images)
     train_generator, val_generator = create_image_to_image_generator([data_dir, mask_dir],
-                                                                     aug_extension=[lambda
-                                                                                      aug: aug.add_median_blur().add_gaussian_blur()],
+                                                                     aug_extension=[extend_func],
                                                                      batch_size=batch_size,
                                                                      im_size=img_size[0])
 
-    # test_generator("../results/test", train_generator, 500)
-    # test_generator("../results/test/val", val_generator, 500)
+    # add adain stylization
+    train_generator = train_generator.style_augment(style_model, style_gen)
+
+    test_generator("../results/test", train_generator, 500)
     model = get_unet_model(img_size, num_classes)
     # model.summary()
     # print(check_not_interception(train_generator.generators[0].filenames,train_generator.generators[1].filenames))
 
-    model.compile(optimizer="rmsprop", loss="binary_crossentropy", metrics=['accuracy'])
+    model.compile(optimizer="rmsprop", loss=dice_coef_loss,
+                  metrics=['accuracy', f1_score, precision_score, recall_score])
 
-    callbacks = get_default_callbacks("../models/unet", val_generator, model)
+    callbacks = get_default_callbacks("../models/unet", val_generator, model, monitor_loss='val_f1_score', mode='max')
 
-    epochs = 20
+    epochs = 30
     history = model.fit(train_generator, epochs=epochs, validation_data=val_generator, callbacks=callbacks)
     plot_graphs(history.history)
-    # model.load_weights("../models/unet/model020822:01.h5")
+    model.load_weights(get_latest_filename("../models/unet/"))
 
     true_imgs, real_masks = get_gen_images(val_generator, 100)
-    predicted_masks = model.predict(real_masks)
+    predicted_masks = model.predict(true_imgs)
     predicted_masks = simple_boundary(predicted_masks)
+    print(f1_score(real_masks, predicted_masks))
     imgs = np.concatenate([true_imgs, real_masks, predicted_masks], axis=2)
     save_images(imgs, "../results/unet/debug_imgs")
-    true_imgs = true_imgs.flatten().astype(dtype=np.float32)
-    predicted_masks = predicted_masks.flatten()
-    print(f1_m(true_imgs, predicted_masks))
-    print(np.sum(np.abs(true_imgs - predicted_masks)) / true_imgs.shape[0])
 
-    # compare
-    # recursive_read_operate_save(input_dir, "../unet/result_images", check_model(model, simple_boundary))
 
-    # real test
-    # ans = process_real_frame(model, "../scan_images/", "../unet/scan_results", interpolate=True)
-    # ans = simple_boundary(ans)
-    # save_images(ans, "../unet/scan_results")
-    # showImage(read_image(val_input_img_paths[0]))
-    # showImage(predicted_masks[0])
+if __name__ == '__main__':
+    train()
