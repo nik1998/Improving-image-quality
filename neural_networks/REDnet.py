@@ -1,3 +1,5 @@
+import math
+
 from utils.mykeras_utils import *
 
 
@@ -71,6 +73,7 @@ if __name__ == "__main__":
     loss_fn = keras.losses.MeanSquaredError()
     autoencoder.compile(optimizer=optimizer, loss=loss_fn)
     autoencoder.build((None, im_size, im_size, 1))
+    autoencoder.summary()
     autoencoder.load_weights('../models/rednet/model020122:19.h5')
 
     images = read_dir("../datasets/scan_images/", 0, 0)

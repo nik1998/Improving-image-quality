@@ -427,9 +427,10 @@ def get_callbacks(save_url, train_pred_func, save_weights_only=True, custom_save
     return [monitor, mcp_save]
 
 
-def create_image_to_image_generator(image_dirs: list, aug_extension=None, stdNorm=False,
+def create_image_to_image_generator(image_dirs: list, aug_extension=None, stdNorm=False, seed=None,
                                     batch_size=8, im_size=128, color_mode='grayscale', different_seed=False):
-    seed = random.randint(0, 2 ** 30)
+    if seed is None:
+        seed = random.randint(0, 2 ** 30)
     train_gens = []
     val_gens = []
     for i, path in enumerate(image_dirs):

@@ -1,4 +1,3 @@
-from neural_networks.adain import NeuralStyleTransfer
 from utils.mykeras_utils import *
 
 # os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
@@ -76,34 +75,49 @@ def get_unet_model(img_size, num_classes=1, channels=1):
     return model
 
 
+def create_image_to_image_generator(image_dirs: list,
+                                    batch_size=8, im_size=128, color_mode='grayscale'):
+    seed = random.randint(0, 2 ** 30)
+    train_gens = []
+    val_gens = []
+    for i, path in enumerate(image_dirs):
+        aug = AugmentationUtils() \
+            .rescale() \
+            .validation_split()
+        train_generator, val_generator = aug.train_val_generator(path,
+                                                                 target_size=(im_size, im_size),
+                                                                 batch_size=batch_size,
+                                                                 color_mode=color_mode,
+                                                                 class_mode=None,
+                                                                 seed=seed)
+        train_gens.append(train_generator)
+        val_gens.append(val_generator)
+
+    train_generator = UnionGenerator(train_gens)
+    val_generator = UnionGenerator(val_gens)
+    return train_generator, val_generator
+
+
 def train():
     keras.backend.clear_session()
     np.random.seed(1234)
     tf.random.set_seed(1234)
-    data_dir = '../datasets/unet/small_scale/all_real_images'
-    mask_dir = '../datasets/unet/small_scale/all_mask_images'
+    data_dir = '../datasets/not_sem/cats/real'
+    mask_dir = '../datasets/not_sem/cats/masks'
     img_size = (256, 256)
     num_classes = 1
     batch_size = 8
 
-    style_model = NeuralStyleTransfer((*img_size, 3), alpha=0.01)
-    style_model.load_weights(get_latest_filename("../models/adain/"))
+    # extend_func = lambda aug: aug.add_median_blur(p=0.5).add_gaussian_blur(p=0.5)
 
-    style_gen = AugmentationUtils().horizontal_flip().vertical_flip().rescale().create_generator("../datasets/style",
-                                                                                                 batch_size=batch_size,
-                                                                                                 target_size=img_size,
-                                                                                                 color_mode='rgb')
-    extend_func = lambda aug: aug.add_median_blur(p=0.5).add_gaussian_blur(p=0.5)
-    # .add_style_network(style_model, style_images)
     train_generator, val_generator = create_image_to_image_generator([data_dir, mask_dir],
-                                                                     aug_extension=[extend_func],
                                                                      batch_size=batch_size,
-                                                                     im_size=img_size[0], seed=1234)
-
-    # add adain stylization
-    train_generator = train_generator.style_augment(style_model, style_gen)
-
-    test_generator("../results/test", train_generator, 500)
+                                                                     im_size=img_size[0])
+    check_not_interception(train_generator.generators[0].filenames, train_generator.generators[1].filenames)
+    check_not_interception(train_generator.generators[1].filenames, train_generator.generators[0].filenames)
+    check_not_interception(val_generator.generators[0].filenames, val_generator.generators[1].filenames)
+    check_not_interception(val_generator.generators[1].filenames, val_generator.generators[0].filenames)
+    #test_generator("../results/test", train_generator, 1000)
     model = get_unet_model(img_size, num_classes)
     # model.summary()
     # print(check_not_interception(train_generator.generators[0].filenames,train_generator.generators[1].filenames))
@@ -111,19 +125,21 @@ def train():
     model.compile(optimizer="rmsprop", loss=dice_coef_loss,
                   metrics=['accuracy', f1_score, precision_score, recall_score])
 
-    callbacks = get_default_callbacks("../models/unet", val_generator, model, monitor_loss='val_f1_score', mode='max')
+
+    callbacks = get_default_callbacks("../models/unet_cats", val_generator, model, monitor_loss='val_f1_score',
+                                      mode='max')
 
     epochs = 30
     history = model.fit(train_generator, epochs=epochs, validation_data=val_generator, callbacks=callbacks)
     plot_graphs(history.history)
-    model.load_weights(get_latest_filename("../models/unet/"))
+    model.load_weights(get_latest_filename("../models/unet_cats/"))
 
     true_imgs, real_masks = get_gen_images(val_generator, 100)
     predicted_masks = model.predict(true_imgs)
     predicted_masks = simple_boundary(predicted_masks)
     print(f1_score(real_masks, predicted_masks))
     imgs = np.concatenate([true_imgs, real_masks, predicted_masks], axis=2)
-    save_images(imgs, "../results/unet/debug_imgs")
+    save_images(imgs, "../results/unet_cats/debug_imgs")
 
 
 if __name__ == '__main__':

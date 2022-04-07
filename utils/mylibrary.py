@@ -235,12 +235,10 @@ def simple_boundary(img):
 
 
 def check_not_interception(arr1, arr2):
-    s = set(arr1)
+    s = set([i.split("/")[-1][:-4] for i in arr1])
     for e in arr2:
-        if e not in s:
+        if e.split("/")[-1][:-4] not in s:
             print(e)
-            return False
-    return True
 
 
 def get_latest_filename(models_dir):

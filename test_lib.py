@@ -339,5 +339,8 @@ if __name__ == '__main__':
 
     # prepare_dataset('datasets/one_layer_images/want_to_split_bin', 'datasets/one_layer_images/splited1/train', 256, step=256, drop=0)
 
-    test_unet()
+    # test_unet()
+
+    recursive_read_operate_save('datasets/not_sem/cats/annotations', 'datasets/not_sem/cats/an2',
+                                lambda x: x * 255 != 2.0, False)
     pass

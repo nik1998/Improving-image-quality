@@ -1,6 +1,9 @@
+import math
+
 import keras
 
 from utils.mykeras_utils import *
+from tensorflow.keras import *
 
 
 class StyleNet(keras.Model):
@@ -17,9 +20,9 @@ class StyleNet(keras.Model):
         self.channels = channels
         self.relu = tf.nn.relu
         self.encoder = self.build_encoder(im_shape)
-        # self.encoder.summary()
+        self.encoder.summary()
         self.decoder = self.build_decoder(self.encoder.output_shape)
-        # self.decoder.summary()
+        self.decoder.summary()
 
         self.avg_encoder = self.build_encoder(im_shape)
         self.avg_encoder.set_weights(self.encoder.get_weights())
@@ -114,7 +117,7 @@ class StyleNet(keras.Model):
     def train_step(self, input_tensor, **kwargs):
         y, x = input_tensor
         initial_image = x
-        # initial_style = y
+        initial_style = y
 
         with tf.GradientTape(persistent=True) as tape:
             x, conv_feats = self.encoder(x)
@@ -122,10 +125,10 @@ class StyleNet(keras.Model):
             t = self.ada_in(y, x)
 
             identity_image = self.decoder([x, conv_feats])
-            # identity_style = self.decoder([y, style_features])
+            identity_style = self.decoder([y, style_features])
             x = self.decoder([t, conv_feats])
-            identity_loss = 0.1 * self.loss_fn(identity_image, initial_image)
-            # + self.loss_fn(identity_style, initial_style)) / 2
+            identity_loss = 0.1 * (
+                    self.loss_fn(identity_image, initial_image) + self.loss_fn(identity_style, initial_style)) / 2
             loss_content, loss_style = self.get_loss(style_features, x, t)
             total_loss = loss_content + self.style_weight * loss_style + identity_loss
         gradients = tape.gradient(total_loss, self.encoder.trainable_variables)
@@ -172,6 +175,14 @@ class StyleNet(keras.Model):
         x = self.decoder([t, conv_feats])
         return x.numpy()
 
+    def avg_predict(self, input_tensor, **kwargs):
+        y, x = input_tensor
+        x, conv_feats = self.avg_encoder(x)
+        y, _ = self.avg_encoder(y)
+        t = self.ada_in(y, x)
+        x = self.avg_decoder([t, conv_feats])
+        return x.numpy()
+
     def save(self, name, **kwargs):
         self.encoder.save(name + "/enc.h5")
         self.decoder.save(name + "/dec.h5")
@@ -190,7 +201,7 @@ def style_image_predict(gen, model):
         data = gen.next()
         prediction = model.predict(data)
         data = np.concatenate(data, axis=1)
-        save_images(np.concatenate([data, prediction], axis=1), path="../results/enc_style/")
+        save_images(np.concatenate([data, prediction], axis=1), path="../results/style/enc_gen")
         return data[:4], prediction[:4]
 
     return f
@@ -232,13 +243,43 @@ if __name__ == "__main__":
     autoencoder.compile(optimizer=optimizer)
     autoencoder.build([(None, im_size, im_size, im_channels), (None, im_size, im_size, im_channels)])
     # autoencoder.load_weights("../models/enc_style/model013020:32")
-    # autoencoder.summary()
+    autoencoder.summary()
     callbacks = get_callbacks("../models/enc_style",
                               train_pred_func=style_image_predict(val_generator, autoencoder),
                               monitor_loss="val_total_loss", custom_save=True)
     callbacks.append(EncDecAverager(autoencoder))
-    t = min(500, len(train_generator))
-    v = min(50, len(val_generator))
-    history = autoencoder.fit(train_generator, steps_per_epoch=t, epochs=10, validation_data=val_generator,
+    t = min(2000, len(train_generator))
+    v = min(100, len(val_generator))
+    history = autoencoder.fit(train_generator, steps_per_epoch=t, epochs=30, validation_data=val_generator,
                               validation_steps=v, callbacks=callbacks)
     plot_graphs(history.history)
+
+    total = len(train_generator)
+
+    for i in range(total):
+        data = train_generator.next()
+        ans = autoencoder.avg_predict(data)
+        res = np.concatenate([*data, ans], axis=2)
+        save_images(res, "../results/style/final_train")
+
+    total = len(val_generator)
+
+    for i in range(total):
+        data = val_generator.next()
+        ans = autoencoder.avg_predict(data)
+        res = np.concatenate([*data, ans], axis=2)
+        save_images(res, "../results/style/final")
+
+    for i in range(total):
+        data = val_generator.next()
+        ans = autoencoder.predict(data)
+        res = np.concatenate([*data, ans], axis=2)
+        save_images(res, "../results/style/final2")
+
+    for a in range(0, 10):
+        autoencoder.alpha = a / 10
+        for i in range(total):
+            data = val_generator.next()
+            ans = autoencoder.predict(data)
+            res = np.concatenate([*data, ans], axis=2)
+            save_images(res, "../results/style/alpha")
