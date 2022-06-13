@@ -1,4 +1,8 @@
-from scipy.stats import norm
+import math
+import random
+
+import numpy as np
+from scipy.signal import convolve2d
 from skimage.feature import hessian_matrix, hessian_matrix_eigvals
 from tqdm import tqdm
 
@@ -7,6 +11,8 @@ from utils import canny_edge_detector as canny
 from utils.mykeras_utils import *
 from utils.noisy import noisy_with_defaults, expansion_algorithm, light_side
 from utils.regression import *
+from utils.img_filters import get_sigma
+import timeit
 
 
 def test_filters():
@@ -45,15 +51,12 @@ def noisy_test():
     save_images(test_img, "results/noisy_dataset/", stdNorm=False)
 
 
-def final_interpolation():
-    # test_real_frame('models/gan/generator.h5', "scan_images/",stdNorm=True)
-    # test_real_frame('models/model09/09/enc_dec.h5', "scan_images/", stdNorm=False, interpolate=True)
-    print(norm.cdf(3, 0, 1))
-
-    im = np.ones((128, 128), dtype=np.float) * 0.2
-    # im = big_own_defect(im, 20)
-    im = expansion_algorithm(im, 20)
+def final_generation():
+    im = np.ones((128, 128, 1), dtype=np.float64) * 0.2
+    im = big_own_defect(im, 10)
+    # im = expansion_algorithm(im, 10, sizel=60, sizer=120, gauss=False)
     showImage(im)
+    save_images([im], "results/article", imageNames=["big_own.png"])
 
 
 # semiconductor manufacturing SEM images
@@ -92,15 +95,13 @@ def double_bounds():
 
 
 def light():
-    fn = 'cat_dogs/1.jpg'
-    img = read_image(fn, 128, 128)
-    src = img.copy()
+    img = read_image("datasets/test/dog.jpg", 160, 120)
     showImage(img)
     img = light_side(img, 10)
     showImage(img)
-
-    cv2.imwrite('result/light1.jpg', 255 * img)
-    cv2.imwrite('result/light1src.jpg', 255 * src)
+    img = adaptive_hist(img, 20)
+    showImage(img)
+    cv2.imwrite('results/article/light.jpg', 255 * img)
 
 
 def collision():
@@ -115,8 +116,8 @@ def collision():
     img = np.transpose(img)
     showImage(img + src)
     img = img + src
-    cv2.imwrite('result/collision.jpg', 255 * img)
-    cv2.imwrite('result/collisionsrc.jpg', 255 * src)
+    cv2.imwrite('results/article/collision.jpg', 255 * img)
+    cv2.imwrite('results/article/collisionsrc.jpg', 255 * src)
 
 
 def median_std():
@@ -128,31 +129,29 @@ def median_std():
     img = img.astype(np.uint8)
     final = cv2.medianBlur(img, 7)
     showImage(final / 255)
-    cv2.imwrite('result/median.jpg', final)
-    cv2.imwrite('result/mediansrc.jpg', img)
+    cv2.imwrite('results/article/median.jpg', final)
+    cv2.imwrite('results/article/mediansrc.jpg', img)
 
 
 def adaptive():
-    fn = 'train_images/img302.png'
-    img = read_image(fn, 128, 128)
+    img = read_image("datasets/test/cat.jpg", 120, 160)
     img = expansion_algorithm(img, 20, gauss=False)
     showImage(img)
-    img = adaptive_median(img, threshold=1.0)
+    # print(timeit.timeit('adaptive_median(img, threshold=1.0)', number=10,
+    #                     globals={'adaptive_median': adaptive_median, 'img': img, }) / 10)
+    img = adaptive_median(img, threshold=0.1)
     showImage(img)
-    cv2.imwrite('result/admedian.jpg', 255 * img)
+    cv2.imwrite('results/article/admedian.jpg', 255 * img)
 
 
 def morph_repair():
-    fn = 'improve/4.103 check_0477.jpg'
-    img = read_image(fn)
-    img = img[-150:-22, -150:-202]
+    img = read_image("datasets/test/cat.jpg", 120, 160)
+    img = expansion_algorithm(img, 20, gauss=True)
     showImage(img)
-    se = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+    se = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
     res = cv2.morphologyEx(img, cv2.MORPH_OPEN, se)
     showImage(res)
-    cv2.imwrite("improve_results/morphfinal.png", 255 * np.concatenate((img, res), axis=1))
-    cv2.imwrite("improve_results/morphfinal2.png",
-                255 * np.concatenate((operate_binarization(img), operate_binarization(res)), axis=1))
+    cv2.imwrite("results/article/morph.jpg", 255 * res)
 
 
 # https://newbedev.com/how-to-use-ridge-detection-filter-in-opencv
@@ -329,6 +328,211 @@ def test_adain():
             save_images(np.concatenate([imgs[j:j + 8], style[j:j + 8], style_imgs], axis=2), "results/style/adain")
 
 
+def oct_prepare():
+    features = read_dir("datasets/not_sem/OCT_dataset_raw/images", 256, 256, sort=True)
+    labels = read_dir("datasets/not_sem/OCT_dataset_raw/labels", 256, 256, sort=True)
+    final_features = []
+    final_labels = []
+    for i in range(len(features)):
+        if np.mean(labels[i]) < 0.5:
+            final_labels.append(labels[i])
+            final_features.append(features[i])
+        else:
+            print("large")
+    save_images(final_features, "datasets/not_sem/OCT_dataset/real/images")
+    save_images.inn = 0
+    save_images(final_labels, "datasets/not_sem/OCT_dataset/masks/images")
+
+
+def classical_pipeline(img):
+    img = img.astype(np.float32)
+    img = cv2.medianBlur(img, 5)  # adaptive_median(img, threshold=1.0)
+    # img = cv2.GaussianBlur(img, (0, 0), 1)
+    se = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    ans = cv2.morphologyEx(img, cv2.MORPH_OPEN, se)
+    return ans
+
+
+def calculate_metrics():
+    from neural_networks.encoder_decoder import create_enc_dec, noise_function
+    from utils.image_quality import compare_images_by_function, psnr, similarity, contrast_measure
+    repair_model = create_enc_dec()
+    repair_model.load_weights(get_latest_filename("models/enc_cats"))
+    train_generator, val_generator = create_image_to_image_generator(
+        ['datasets/not_sem/cats/real', 'datasets/not_sem/cats/real'],
+        aug_extension=[noise_function],
+        batch_size=1,
+        im_size=256, vertical_flip=False,
+        ninty_rotate=False)
+    total = 500
+    imagex = []
+    imageny = []
+    imagecy = []
+    imageay = []
+    imagewy = []
+    imagey = []
+    for i in tqdm(range(total)):
+        x, y = train_generator.next()
+        ny = repair_model.predict(x)
+        imagey.append(np.squeeze(y))
+        imagex.append(np.squeeze(x))
+        imageny.append(np.squeeze(ny))
+        x = np.squeeze(x)
+        imagecy.append(classical_pipeline(x))
+        imageay.append(adaptive_local_mean_gauss(x))
+        imagewy.append(standart_winner(x))
+    print(compare_images_by_function(imagex, imagey, psnr, double=True))
+    print(compare_images_by_function(imagex, imageny, psnr, double=True))
+    print(compare_images_by_function(imagex, imagecy, psnr, double=True))
+    print(compare_images_by_function(imagex, imageay, psnr, double=True))
+    print(compare_images_by_function(imagex, imagewy, psnr, double=True))
+    print(compare_images_by_function(imagex, imagey, similarity, double=True))
+    print(compare_images_by_function(imagex, imageny, similarity, double=True))
+    print(compare_images_by_function(imagex, imagecy, similarity, double=True))
+    print(compare_images_by_function(imagex, imageay, similarity, double=True))
+    print(compare_images_by_function(imagex, imagewy, similarity, double=True))
+    print(compare_images_by_function(imagex, imagey, contrast_measure))
+    print(compare_images_by_function(imageny, imagecy, contrast_measure))
+    print(compare_images_by_function(imageay, imagewy, contrast_measure))
+    imagex = np.asarray(imagex)
+    imagecy = np.asarray(imagecy)
+    save_images(np.concatenate([imagex, imagecy], axis=2), "results/test")
+
+
+def wiener_filter(img, kernel, K):
+    kernel /= np.sum(kernel)
+    dummy = np.copy(img)
+    dummy = np.fft.fft2(dummy)
+    kernel = np.fft.fft2(kernel, s=img.shape)
+    kernel = np.conj(kernel) / (np.abs(kernel) ** 2 + K)
+    dummy = dummy * kernel
+    dummy = np.abs(np.fft.ifft2(dummy))
+    return dummy.astype(np.float32)
+
+
+def standart_winner(img):
+    kernel_size = 3
+    kernel = np.eye(kernel_size) / kernel_size
+    return wiener_filter(img, kernel, 0.05)
+
+
+def gaussian_kernel(size, sigma=1.0):
+    gausskernel = np.zeros((size, size), np.float32)
+    for i in range(size):
+        for j in range(size):
+            norm = math.pow(i - 1, 2) + pow(j - 1, 2)
+            gausskernel[i, j] = math.exp(-norm / (2 * math.pow(sigma, 2)))
+    sum = np.sum(gausskernel)
+    kernel = gausskernel / sum
+    return kernel
+
+
+def blur(img, kernel_size=3):
+    dummy = np.copy(img)
+    h = np.eye(kernel_size) / kernel_size
+    dummy = convolve2d(dummy, h, mode='valid')
+    return dummy
+
+
+def wiener_test():
+    img = read_image("datasets/test/dog.jpg", 120, 160) * 255
+
+    img = img[:120, :120]
+    # Blur the image
+    kernel_size = 3
+    blurred_img = blur(img, kernel_size=kernel_size)
+
+    # Add Gaussian noise
+
+    noisy_img = gauss_noise(blurred_img, var=36)
+
+    # Apply Wiener Filter
+    # kernel = gaussian_kernel(5, sigma=6)
+    # noisy_img = img
+    kernel = np.eye(kernel_size) / kernel_size
+
+    filtered_img = wiener_filter(noisy_img, kernel, K=0.05)
+    showImage(img / 255)
+    showImage(blurred_img / 255)
+    showImage(noisy_img / 255)
+    showImage(filtered_img / 255)
+
+
+def define_noise():
+    img = read_image("datasets/test/dog.jpg", 120, 160)
+    img = gauss_noise(img, var=0.016)
+    ss = 0.016 ** 0.5
+    showImage(img)
+    s = get_sigma(img)
+    print(s)
+
+
+def compare_gauss():
+    from dyplom_experements import REDnet
+    from sklearn.metrics import mean_squared_error
+    im_size = 256
+    autoencoder = REDnet.REDNet(num_layers=10, channels=1)
+    autoencoder.build((None, im_size, im_size, 1))
+    autoencoder.load_weights(get_latest_filename("models/rednetcats"))
+    ss = np.linspace(0, 1.0, 20)
+    aug = AugmentationUtils().rescale()
+    content = aug.create_generator('datasets/not_sem/cats/real', target_size=[im_size, im_size],
+                                   color_mode='grayscale')
+    images = get_gen_images(content, 10)
+    classic = []
+    neural = []
+    for s in tqdm(ss):
+        cm = 0
+        nm = 0
+        for im in images:
+            img = gauss_noise(im, var=s * s)
+            res = adaptive_local_mean_gauss(img)
+            cm += mean_squared_error(res[..., 0], im[..., 0])
+            img = np.expand_dims(img, axis=0)
+            res = autoencoder.predict(img)[0]
+            nm += mean_squared_error(res[..., 0], im[..., 0])
+        classic.append(cm / 10)
+        neural.append(nm / 10)
+
+    fig, ax = plt.subplots()
+    ax.plot(ss, classic, label='adaptive mean')
+    ax.plot(ss, neural, label='neural')
+    # ax.title('Graph')
+    ax.legend()
+    plt.xlabel('sigma')
+    plt.ylabel('mse')
+    plt.show()
+
+
+def benchmark_algorithms():
+    from dyplom_experements import REDnet
+    im_size = 256
+    img = read_image("datasets/test/dog.jpg", im_size, im_size)
+    img = gauss_noise(img, var=0.1)
+    autoencoder = REDnet.REDNet(num_layers=10, channels=1)
+    autoencoder.build((None, im_size, im_size, 1))
+    autoencoder.load_weights(get_latest_filename("models/rednetcats"))
+    img_n = np.expand_dims(img, axis=-1)
+    img_n = np.expand_dims(img_n, axis=0)
+    number = 20
+    print('autoencoder.predict(img)', timeit.timeit('autoencoder.predict(img)', number=number,
+                                                    globals={'autoencoder': autoencoder, 'img': img_n, }))
+
+    print('classical_pipeline(img)', timeit.timeit('classical_pipeline(img)', number=number,
+                                                   globals={'classical_pipeline': classical_pipeline, 'img': img, }))
+
+    print('adaptive_local_mean_gauss(img)', timeit.timeit('adaptive_local_mean_gauss(img)', number=number,
+                                                          globals={
+                                                              'adaptive_local_mean_gauss': adaptive_local_mean_gauss,
+                                                              'img': img, }))
+    kernel_size = 3
+    kernel = np.eye(kernel_size) / kernel_size
+
+    print('wiener_filter(img, kernel, K=0.05)', timeit.timeit('wiener_filter(img, kernel, K=0.05)', number=number,
+                                                              globals={'wiener_filter': wiener_filter, 'kernel': kernel,
+                                                                       'img': img, }))
+
+
 if __name__ == '__main__':
     # recursive_read_operate_save('train_images/', 'all_bin_images/', image_complex_bin, False)
     # copy_from_labels("unet/bin_images", "train_images", "unet/real_images")
@@ -339,8 +543,24 @@ if __name__ == '__main__':
 
     # prepare_dataset('datasets/one_layer_images/want_to_split_bin', 'datasets/one_layer_images/splited1/train', 256, step=256, drop=0)
 
-    # test_unet()
+    #
+    # recursive_read_operate_save('datasets/not_sem/cats/annotations', 'datasets/not_sem/cats/an2',
+    #                             lambda x: x * 255 != 2.0, False)
 
-    recursive_read_operate_save('datasets/not_sem/cats/annotations', 'datasets/not_sem/cats/an2',
-                                lambda x: x * 255 != 2.0, False)
+    # img = read_image("results/article/img291.png")
+    # im1 = img[:, :256]
+    # cv2.imwrite("results/article/img1.png", np.rot90(im1, 3) * 255)
+    # im1 = img[:, 256:512]
+    # cv2.imwrite("results/article/img2.png", np.rot90(im1, 3) * 255)
+    # im1 = img[:, 512:]
+    # cv2.imwrite("results/article/img3.png", np.rot90(im1, 3) * 255)
+
+    # wiener_test()
+    # adaptive()
+    # morph_repair()
+    # light()
+    # define_noise()
+    # compare_gauss()
+    benchmark_algorithms()
+    #calculate_metrics()
     pass

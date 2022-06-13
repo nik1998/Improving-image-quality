@@ -1,3 +1,6 @@
+import random
+from typing import List
+
 from utils.mylibrary import *
 
 
@@ -15,7 +18,7 @@ def unsharp_masking(image, sigma=2.0):
     # smooth = cv2.GaussianBlur(image, (0, 0), 2)
     gaussian_3 = np.zeros_like(image)
     gaussian_3 = cv2.GaussianBlur(image, (0, 0), sigma, gaussian_3)
-    return cv2.addWeighted(image, 1.5, gaussian_3, -0.5, 0)
+    return 1.5 * image - 0.5 * gaussian_3
     # return unsharp_image
 
 
@@ -153,13 +156,6 @@ def total_masking(image, sigma1=2.0, sigma2=2.0):
     return np.clip(img, 0.0, 1.0)
 
 
-def median_demo(target_array, array_length):
-    sorted_array = np.sort(target_array)
-    median = sorted_array[array_length // 2]
-    return median
-
-
-# https://github.com/sarnold/adaptive-median/blob/master/adaptive_median.py
 def adaptive_median(image, window=3, threshold=0):
     ## set filter window and image dimensions
     filter_window = 2 * window + 1
@@ -168,27 +164,47 @@ def adaptive_median(image, window=3, threshold=0):
 
     ## create 2-D image array and initialize window
     image_array = image.copy()
-    filter_window = np.zeros((filter_window, filter_window), dtype=np.float)
-    target_vector = np.zeros(vlength, dtype=np.float)
+
     ## loop over image with specified window filter_window
-    for y in range(window, ylength - (window + 1)):
-        for x in range(window, xlength - (window + 1)):
+
+    for x in range(window, xlength - (window + 1)):
+        for y in range(window, ylength - (window + 1)):
             ## populate window, sort, find median
-            filter_window = image[y - window:y + window + 1, x - window:x + window + 1]
-            target_vector = np.reshape(filter_window, (vlength,))
+            filter_window = image[x - window:x + window + 1, y - window:y + window + 1]
+            target_vector = filter_window.flatten()
             ## numpy sort
-            median = median_demo(target_vector, vlength)
-            ## check for threshold
+            sorted_array = np.sort(target_vector)
+            median = sorted_array[len(target_vector) // 2]
             if threshold <= 0:
-                image_array[y, x] = median
+                image_array[x, y] = median
             else:
-                scale = np.zeros(vlength)
-                for n in range(vlength):
-                    scale[n] = abs(target_vector[n] - median)
+                scale = np.abs(target_vector - median)
                 scale = np.sort(scale)
                 Sk = 1.4826 * scale[vlength // 2]
-                if abs(image_array[y, x] - median) > threshold * Sk:
-                    image_array[y, x] = median
+                if abs(image_array[x, y] - median) > threshold * Sk:
+                    image_array[x, y] = median
+
+    return image_array
+
+
+def adaptive_mean(image, window=3, threshold=0):
+    window = window // 2
+    xlength, ylength = image.shape
+
+    image_array = image.copy()
+
+    for x in range(window, xlength):
+        for y in range(window, ylength):
+            filter_window = image[x - window:x + window + 1, y - window:y + window + 1]
+            target_vector = filter_window.flatten()
+            mean = filter_window.mean()
+            if threshold <= 0:
+                image_array[x, y] = mean
+            else:
+                scale = np.abs(target_vector - mean).mean()
+                Sk = 1.4826 * scale
+                if abs(image_array[x, y] - mean) > threshold * Sk:
+                    image_array[x, y] = mean
 
     return image_array
 
@@ -307,3 +323,32 @@ def adaptive_binarization_otcy(img):
 def rgb_to_gray(images):
     rgb_weights = [0.2989, 0.5870, 0.1140]
     return np.dot(images[..., :3], rgb_weights)
+
+
+def get_sigma(image):
+    ans = []
+    h, w, *_ = image.shape
+    block = 4
+    for i in range(500):
+        x = random.randint(block, h - block)
+        y = random.randint(block, w - block)
+        im = image[x - block:x + block, y - block:y + block]
+        ans.append(im.std())
+    sorted(ans)
+    return np.mean(ans[:100])
+
+
+def adaptive_local_mean_gauss(image, step=8):
+    img = image.copy()
+    window = step // 2
+
+    h, w, *_ = image.shape
+    s = get_sigma(image)
+    for x in range(window, h):
+        for y in range(window, w):
+            filter_window = image[max(x - window, 0):x + window + 1, max(y - window, 0):y + window + 1]
+            ml = filter_window.mean()
+            sl = filter_window.std()
+            if sl != 0:
+                img[x, y] = image[x, y] - s / sl * (image[x, y] - ml)
+    return img

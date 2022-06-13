@@ -35,7 +35,7 @@ def noisy_with_defaults(image, noise_typ):
         return big_own_defect(image, count, hl=5, hr=15, wl=5, wr=15)
 
 
-def gauss_noise(image, mean, var, p=1.0):
+def gauss_noise(image, mean=0, var=0.1, p=1.0):
     rnd = random.Random()
     rnd = np.random.default_rng(rnd.randint(0, 2 ** 30))
     pr = rnd.uniform(0.0, 1.0)
@@ -44,7 +44,7 @@ def gauss_noise(image, mean, var, p=1.0):
     sigma = var ** 0.5
     gauss = rnd.normal(mean, sigma, image.shape)
     noisy = image + gauss
-    return noisy
+    return noisy.clip(0, 255)
 
 
 def salt_paper(image, s_vs_p, amount, p=1.0):
@@ -64,19 +64,21 @@ def salt_paper(image, s_vs_p, amount, p=1.0):
     return image
 
 
-def light_side(image, coeff, exponential=False, p=1.0):
+def light_side(image, coeff, exponential=False, dist=10, p=1.0):
     rnd = random.Random()
     pr = rnd.uniform(0.0, 1.0)
     if pr > p:
         return image
-    h, w, _ = image.shape
-    grim = np.expand_dims(np.mgrid[0:h, 0:w].astype(np.float)[0], axis=-1)
+    h, w, *_ = image.shape
+    grim = np.mgrid[0:h, 0:w].astype(np.float)[0]
+    if len(image.shape) == 3:
+        grim = np.expand_dims(grim, axis=-1)
     if exponential:
         grim = np.exp(grim) * coeff
         grim = grim / np.max(grim)
     else:
-        g2 = np.square(grim + 10)
-        grim = h / 2 / g2
+        g2 = np.square(grim + dist)
+        grim = coeff * h / g2
 
     j = rnd.randint(0, 4)
     if j == 1:
@@ -129,8 +131,8 @@ def expansion_algorithm(image, count, sizel=10, sizer=50, gauss=True, p=1.0):
     pr = rnd.uniform(0.0, 1.0)
     if pr > p:
         return image
-    h, w, _ = image.shape
-    z = np.zeros(image.shape, dtype=np.float)
+    h, w, *_ = image.shape
+    z = np.zeros(image.shape, dtype=np.float64)
     for _ in range(count):
         i = rnd.randint(0, h - 1)
         j = rnd.randint(0, w - 1)
@@ -187,3 +189,22 @@ def big_light_hole(img, count=3, hl=10, hr=30, wl=10, wr=30, p=1.0):
     cv2.GaussianBlur(m, (0, 0), 2, m)
     image += 0.3 * m
     return np.clip(image, 0.0, 1.0)
+
+
+def median_blur(image, k=5, p=1.0):
+    rnd = random.Random()
+    pr = rnd.uniform(0.0, 1.0)
+    if pr > p:
+        return image
+    img = np.ascontiguousarray(image, dtype=np.float32)
+    cv2.medianBlur(img, k, img)
+    return img
+
+
+def gaussian_blur(image, sigma=1.0, p=1.0):
+    rnd = random.Random()
+    pr = rnd.uniform(0.0, 1.0)
+    if pr > p:
+        return image
+    cv2.GaussianBlur(image, (0, 0), sigma, image)
+    return image

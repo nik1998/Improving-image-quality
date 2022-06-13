@@ -1,5 +1,5 @@
 from utils.mykeras_utils import *
-
+from keras import layers
 # os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 physical_devices = tf.config.list_physical_devices('GPU')
@@ -100,10 +100,12 @@ def create_image_to_image_generator(image_dirs: list,
 
 def train():
     keras.backend.clear_session()
-    np.random.seed(1234)
-    tf.random.set_seed(1234)
-    data_dir = '../datasets/not_sem/cats/real'
-    mask_dir = '../datasets/not_sem/cats/masks'
+    np.random.seed(12345)
+    tf.random.set_seed(12345)
+    # data_dir = '../datasets/not_sem/cats/real'
+    # mask_dir = '../datasets/not_sem/cats/masks'
+    data_dir = '../datasets/not_sem/OCT_dataset/real'
+    mask_dir = '../datasets/not_sem/OCT_dataset/masks'
     img_size = (256, 256)
     num_classes = 1
     batch_size = 8
@@ -117,29 +119,28 @@ def train():
     check_not_interception(train_generator.generators[1].filenames, train_generator.generators[0].filenames)
     check_not_interception(val_generator.generators[0].filenames, val_generator.generators[1].filenames)
     check_not_interception(val_generator.generators[1].filenames, val_generator.generators[0].filenames)
-    #test_generator("../results/test", train_generator, 1000)
+    test_generator("../results/test", train_generator, 50)
     model = get_unet_model(img_size, num_classes)
     # model.summary()
     # print(check_not_interception(train_generator.generators[0].filenames,train_generator.generators[1].filenames))
 
-    model.compile(optimizer="rmsprop", loss=dice_coef_loss,
-                  metrics=['accuracy', f1_score, precision_score, recall_score])
+    model.compile(optimizer="rmsprop", loss="binary_crossentropy",#dice_coef_loss,
+                  metrics=['accuracy', f1_score])
 
-
-    callbacks = get_default_callbacks("../models/unet_cats", val_generator, model, monitor_loss='val_f1_score',
+    callbacks = get_default_callbacks("../models/unet_oct", val_generator, model, monitor_loss='val_f1_score',
                                       mode='max')
 
-    epochs = 30
+    epochs = 50
     history = model.fit(train_generator, epochs=epochs, validation_data=val_generator, callbacks=callbacks)
     plot_graphs(history.history)
-    model.load_weights(get_latest_filename("../models/unet_cats/"))
+    model.load_weights(get_latest_filename("../models/unet_oct/"))
 
     true_imgs, real_masks = get_gen_images(val_generator, 100)
     predicted_masks = model.predict(true_imgs)
     predicted_masks = simple_boundary(predicted_masks)
     print(f1_score(real_masks, predicted_masks))
     imgs = np.concatenate([true_imgs, real_masks, predicted_masks], axis=2)
-    save_images(imgs, "../results/unet_cats/debug_imgs")
+    save_images(imgs, "../results/unet_oct/debug_imgs")
 
 
 if __name__ == '__main__':

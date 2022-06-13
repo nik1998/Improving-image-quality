@@ -1,5 +1,6 @@
 from skimage.metrics import structural_similarity
-from mylibrary import *
+import cv2
+import numpy as np
 
 
 # http://amroamroamro.github.io/mexopencv/matlab/cv.PSNR.html
@@ -14,14 +15,12 @@ def psnr(img1, img2):
 
 
 # https://cvnote.ddlee.cc/2019/09/12/psnr-ssim-python
-def similarity(img1, img2, show=False):
+def similarity(img1, img2):
     h1, w1 = img1.shape
     h2, w2 = img2.shape
     hm = min(h1, h2)
     wm = min(w1, w2)
     (score, diff) = structural_similarity(img1[:hm, :wm], img2[:hm, :wm], full=True)
-    if show:
-        showImage(diff)
     return score
 
 

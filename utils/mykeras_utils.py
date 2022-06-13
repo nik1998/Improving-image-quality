@@ -1,3 +1,4 @@
+import random
 from datetime import datetime
 from datetime import timedelta
 
@@ -43,7 +44,6 @@ class ReflectionPadding2D(layers.Layer):
 
 
 class UnionGenerator(Sequence):
-    """Helper to iterate over the data (as Numpy arrays)."""
 
     def __init__(self, generators):
 
@@ -239,25 +239,14 @@ class AugmentationUtils:
 
     def add_median_blur(self, k=5, p=1.0):
         def f(image):
-            rnd = random.Random()
-            pr = rnd.uniform(0.0, 1.0)
-            if pr > p:
-                return image
-            img = np.ascontiguousarray(image, dtype=np.float32)
-            cv2.medianBlur(img, k, img)
-            return img
+            return median_blur(image, k=k, p=p)
 
         self.operators.append(f)
         return self
 
     def add_gaussian_blur(self, sigma=1.0, p=1.0):
         def f(image):
-            rnd = random.Random()
-            pr = rnd.uniform(0.0, 1.0)
-            if pr > p:
-                return image
-            cv2.GaussianBlur(image, (0, 0), sigma, image)
-            return image
+            return gaussian_blur(image, sigma=sigma, p=p)
 
         self.operators.append(f)
         return self
@@ -266,6 +255,30 @@ class AugmentationUtils:
         def f(image):
             i = random.randint(0, 4)
             return np.rot90(image, k=i)
+
+        self.operators.append(f)
+        return self
+
+    def add_different_noise(self, p=0.5):
+        def f(image):
+            i = random.randint(0, 4)
+            if i == 0:
+                return gauss_noise(image, var=0.01, p=p)
+            if i == 1:
+                return salt_paper(image, s_vs_p=0.5, amount=0.05, p=p)
+            if i == 2:
+                return light_side(image, coeff=64, exponential=False, dist=128, p=p)
+            if i == 3:
+                return gaussian_blur(image, sigma=2.0, p=p)
+            return expansion_algorithm(image, count=20, sizel=10, sizer=50, gauss=True, p=p)
+
+        self.operators.append(f)
+        return self
+
+    def random_gauss_noise(self, mean=0, maxvar=1000, p=0.5):
+        def f(image):
+            var = random.randint(0, maxvar) / maxvar / 10
+            return gauss_noise(image, mean, var, p)
 
         self.operators.append(f)
         return self
@@ -303,47 +316,49 @@ def test_generator(save_dir, generator, count=None, stdNorm=False):
 
 def predict_images(gen, images):
     sp = np.expand_dims(images, axis=-1)
-    p = gen.predict(sp, batch_size=16)
+    p = gen.predict(sp, batch_size=8)
     return np.reshape(p, p.shape[:-1])
 
 
 def scan_image(gen, image, img_size, step=8, e=0.01):
-    imh, imw = image.shape
+    imh, imw, _ = image.shape
     p = []
     ans = np.zeros((imh, imw))
-    for i in range(0, imh - img_size, step):
-        for j in range(0, imw - img_size, step):
+    for i in range(0, imh - img_size + 1, step):
+        for j in range(0, imw - img_size + 1, step):
             im = image[i:i + img_size, j:j + img_size]
             p.append(im)
     p = np.asarray(p)
+    res = np.zeros((len(p), img_size, img_size))
     start_time = time.time()
-    for i in range(0, len(p), 1024):
-        p[i:i + 1024] = predict_images(gen, p[i:i + 1024])
+    s_pred = 128
+    for i in range(0, len(p), s_pred):
+        res[i:i + s_pred] = predict_images(gen, p[i:i + s_pred])
     cnt = 0
     summ = np.zeros((imh, imw))
     s = np.ones((img_size, img_size))
     for i in range(0, imh - img_size, step):
         for j in range(0, imw - img_size, step):
-            ans[i:i + img_size, j:j + img_size] += p[cnt]
+            ans[i:i + img_size, j:j + img_size] += res[cnt]
             summ[i:i + img_size, j:j + img_size] += s
             cnt += 1
     summ = summ.astype(np.float)
     ans = np.divide(ans, summ)
-    for i in range(imh):
-        for j in range(imw):
-            if abs(ans[i, j] - image[i, j]) <= e:
-                ans[i, j] = image[i, j]
+    # for i in range(imh):
+    #     for j in range(imw):
+    #         if abs(ans[i, j] - image[i, j]) <= e:
+    #             ans[i, j] = image[i, j]
     print(str(timedelta(seconds=time.time() - start_time)))
     return ans
 
 
 def test_real_frame(model_path, image_path, model=None, output_path='../results/scan_results/', stdNorm=False,
-                    interpolate=False, img_size=128, post_process_func=None):
+                    interpolate=False, img_size=128, post_process_func=None, gray=True):
     if model is None:
         model = keras.models.load_model(model_path)
     else:
         model.load_weights(model_path)
-    images = read_dir(image_path, 0, 0)
+    images = read_dir(image_path, 0, 0, gray=gray)
     imageNames = os.listdir(image_path)
     process_real_frame(model, images, output_path=output_path, stdNorm=stdNorm, interpolate=interpolate,
                        imageNames=imageNames, img_size=img_size, post_process_func=post_process_func)
@@ -365,6 +380,7 @@ def process_real_frame(gen, images, output_path='../results/scan_results/', stdN
         if post_process_func is not None:
             res = post_process_func(image, res)
         save_images([res], output_path, stdNorm, imageNames=[imageNames[i]])
+        keras.backend.clear_session()
 
     # estimate quality
     # print(compare_images_by_function(images, res, contrast_measure))
@@ -428,7 +444,8 @@ def get_callbacks(save_url, train_pred_func, save_weights_only=True, custom_save
 
 
 def create_image_to_image_generator(image_dirs: list, aug_extension=None, stdNorm=False, seed=None,
-                                    batch_size=8, im_size=128, color_mode='grayscale', different_seed=False):
+                                    batch_size=8, im_size=128, color_mode='grayscale', different_seed=False,
+                                    vertical_flip=True, ninty_rotate=True):
     if seed is None:
         seed = random.randint(0, 2 ** 30)
     train_gens = []
@@ -437,8 +454,9 @@ def create_image_to_image_generator(image_dirs: list, aug_extension=None, stdNor
         aug = AugmentationUtils() \
             .rescale(stdNorm) \
             .horizontal_flip() \
-            .vertical_flip() \
             .validation_split()
+        if vertical_flip:
+            aug = aug.vertical_flip()
         if aug_extension is not None and len(aug_extension) > i and aug_extension[i] is not None:
             aug = aug_extension[i](aug)
         if different_seed:
@@ -452,8 +470,12 @@ def create_image_to_image_generator(image_dirs: list, aug_extension=None, stdNor
         train_gens.append(train_generator)
         val_gens.append(val_generator)
 
-    train_generator = UnionGenerator(train_gens).ninty_rotate()
-    val_generator = UnionGenerator(val_gens).ninty_rotate()
+    train_generator = UnionGenerator(train_gens)
+    val_generator = UnionGenerator(val_gens)
+    if ninty_rotate:
+        train_generator = train_generator.ninty_rotate()
+        val_generator = val_generator.ninty_rotate()
+
     return train_generator, val_generator
 
 

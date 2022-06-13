@@ -225,7 +225,7 @@ class EncDecAverager(keras.callbacks.Callback):
 if __name__ == "__main__":
     batch_size = 4
     style_dir = "../datasets/style"
-    content_dir = "../datasets/final_good_images"
+    content_dir = "../datasets/imagenet/style"
     # style_dir = "../datasets/unet/images"
     # content_dir = "../datasets/unet/mask"
     im_size = 256
@@ -236,9 +236,9 @@ if __name__ == "__main__":
                                                                      im_size=im_size,
                                                                      different_seed=True)
 
-    test_generator("../results/test", train_generator, count=100)
-    autoencoder = StyleNet(im_shape=(im_size, im_size, im_channels), num_layers=8, channels=im_channels,
-                           style_weight=10)
+    #test_generator("../results/test", train_generator, count=100)
+    autoencoder = StyleNet(im_shape=(im_size, im_size, im_channels), num_layers=10, channels=im_channels,
+                           style_weight=100)
     optimizer = keras.optimizers.Adam(learning_rate=1e-4)
     autoencoder.compile(optimizer=optimizer)
     autoencoder.build([(None, im_size, im_size, im_channels), (None, im_size, im_size, im_channels)])
