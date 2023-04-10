@@ -1,4 +1,3 @@
-import random
 from datetime import datetime
 from datetime import timedelta
 
@@ -102,7 +101,7 @@ class AugmentationUtils:
         self.operators = []
 
     def create_generator(self, data_dir, target_size=(128, 128), batch_size=16,
-                         subset=None, color_mode='grayscale', class_mode=None, seed=None):
+                         subset=None, color_mode='grayscale', class_mode=None, seed=None, shuffle=True):
         self.params["preprocessing_function"] = self._augment()
         g = ImageDataGenerator(**self.params)
         return g.flow_from_directory(data_dir,
@@ -111,6 +110,7 @@ class AugmentationUtils:
                                      color_mode=color_mode,
                                      class_mode=class_mode,
                                      subset=subset,
+                                     shuffle=shuffle,
                                      seed=seed)
 
     def create_memory_generator(self, data_dir, target_size=(128, 128), batch_size=16,
@@ -132,13 +132,13 @@ class AugmentationUtils:
                                      class_mode=class_mode,
                                      subset='training',
                                      seed=seed), \
-               self.create_generator(data_dir,
-                                     target_size=target_size,
-                                     batch_size=batch_size,
-                                     color_mode=color_mode,
-                                     class_mode=class_mode,
-                                     subset='validation',
-                                     seed=seed),
+            self.create_generator(data_dir,
+                                  target_size=target_size,
+                                  batch_size=batch_size,
+                                  color_mode=color_mode,
+                                  class_mode=class_mode,
+                                  subset='validation',
+                                  seed=seed),
 
     def _augment(self):
         op = self.operators.copy()
@@ -445,7 +445,7 @@ def get_callbacks(save_url, train_pred_func, save_weights_only=True, custom_save
 
 def create_image_to_image_generator(image_dirs: list, aug_extension=None, stdNorm=False, seed=None,
                                     batch_size=8, im_size=128, color_mode='grayscale', different_seed=False,
-                                    vertical_flip=True, ninty_rotate=True):
+                                    vertical_flip=True, ninty_rotate=True, validation_split=0.2):
     if seed is None:
         seed = random.randint(0, 2 ** 30)
     train_gens = []
@@ -454,7 +454,7 @@ def create_image_to_image_generator(image_dirs: list, aug_extension=None, stdNor
         aug = AugmentationUtils() \
             .rescale(stdNorm) \
             .horizontal_flip() \
-            .validation_split()
+            .validation_split(validation_split)
         if vertical_flip:
             aug = aug.vertical_flip()
         if aug_extension is not None and len(aug_extension) > i and aug_extension[i] is not None:

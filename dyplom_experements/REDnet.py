@@ -23,11 +23,10 @@ class REDNet(keras.Model):
         for i in range(num_layers - 1):
             deconv_layers.append(layers.Conv2DTranspose(num_features, kernel_size=3, padding="same",
                                                         activation=layers.Activation("relu")))
-        deconv_layers.append(
-            layers.Conv2DTranspose(16*channels, kernel_size=3, strides=2, padding="same"))
+        self.final_dec = layers.Conv2DTranspose(channels, kernel_size=3, strides=2, padding="same")
 
-        self.final_dec = layers.Conv2D(channels, kernel_size=3, padding="same", kernel_initializer='he_uniform',
-                                       activation=layers.Activation("relu"))
+        # self.final_dec = layers.Conv2D(channels, kernel_size=3, padding="same", kernel_initializer='he_uniform',
+        #                                activation=layers.Activation("relu"))
         # self.final_dec2 = layers.Conv2D(channels, kernel_size=3, padding="same", kernel_initializer='he_uniform',
         #                                 activation=layers.Activation("relu"))
 
@@ -54,11 +53,11 @@ class REDNet(keras.Model):
                 x = x + conv_feat
                 x = self.relu(x)
 
-        #x += residual
-       #x = self.relu(x)
-        # x = self.reflect_padding(x)
         x = self.final_dec(x)
-        #x = self.final_dec2(x)
+        x += residual
+        x = self.relu(x)
+        # x = self.reflect_padding(x)
+        # x = self.final_dec2(x)
         return x
 
 

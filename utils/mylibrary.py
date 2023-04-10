@@ -33,7 +33,7 @@ def split_image(image, img_size, step=128):
     return small_array, h, w
 
 
-def prepare_dataset(image_path, output_path, imsize, step=128, drop=0.5, inmemory=False, determined=False):
+def prepare_dataset(image_path, output_path, imsize, step=128, drop=0.5, inmemory=False, determined=False, gray=True):
     print(image_path)
     dir = os.listdir(image_path)
     if determined:
@@ -42,19 +42,19 @@ def prepare_dataset(image_path, output_path, imsize, step=128, drop=0.5, inmemor
         abs_path = os.path.join(image_path, dr)
         if os.path.isdir(abs_path):
             prepare_dataset(abs_path, output_path, imsize, step, drop, inmemory)
-        elif 'jpg' == dr[-3:] or 'bmp' == dr[-3:] or 'png' == dr[-3:]:
+        elif 'jpg' == dr[-3:].lower() or 'bmp' == dr[-3:] or 'png' == dr[-3:].lower():
             print('Add file:' + abs_path)
-            img = read_image(abs_path)
+            img = read_image(abs_path, gray=gray)
             ar, _, _ = split_image(img, imsize, step)
             images = np.asarray(ar)
             if not determined:
                 images = shuffle(images)
             d = len(images)
             images = images[int(drop * d):]
-            save_images(images, output_path)
+            save_images(images, output_path, rgbformat=False)
 
 
-def save_images(images, path, stdNorm=False, imageNames=None):
+def save_images(images, path, stdNorm=False, imageNames=None, rgbformat=True):
     if not hasattr(save_images, "inn"):
         save_images.inn = 0
     if not os.path.exists(path):
@@ -65,7 +65,10 @@ def save_images(images, path, stdNorm=False, imageNames=None):
             img = img * 127.5 + 127.5
         else:
             img = img * 255
-        # print(np.mean(img))
+        if len(img.shape) == 4:
+            img = img[0]
+        if len(img.shape) == 3 and img.shape[2] == 3 and rgbformat:
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         if imageNames is None:
             cv2.imwrite(os.path.join(path, "img" + str(save_images.inn) + ".png"), img)
             save_images.inn += 1

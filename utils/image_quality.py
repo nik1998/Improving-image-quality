@@ -3,11 +3,25 @@ import cv2
 import numpy as np
 
 
+def mean_psnr(imgs_test, imgs_real):
+    res = 0
+    for img1, img2 in zip(imgs_test, imgs_real):
+        res += psnr(img1, img2)
+    return res / len(imgs_test)
+
+
+def mean_ssim(imgs_test, imgs_real):
+    res = 0
+    for img1, img2 in zip(imgs_test, imgs_real):
+        res += similarity(img1, img2)
+    return res / len(imgs_test)
+
+
 # http://amroamroamro.github.io/mexopencv/matlab/cv.PSNR.html
 # https://cvnote.ddlee.cc/2019/09/12/psnr-ssim-python
 def psnr(img1, img2):
-    h1, w1 = img1.shape
-    h2, w2 = img2.shape
+    h1, w1, _ = img1.shape
+    h2, w2, _ = img2.shape
     hm = min(h1, h2)
     wm = min(w1, w2)
     psnr = cv2.PSNR(img1[:hm, :wm], img2[:hm, :wm], 1)
@@ -16,11 +30,11 @@ def psnr(img1, img2):
 
 # https://cvnote.ddlee.cc/2019/09/12/psnr-ssim-python
 def similarity(img1, img2):
-    h1, w1 = img1.shape
-    h2, w2 = img2.shape
+    h1, w1, _ = img1.shape
+    h2, w2, _ = img2.shape
     hm = min(h1, h2)
     wm = min(w1, w2)
-    (score, diff) = structural_similarity(img1[:hm, :wm], img2[:hm, :wm], full=True)
+    (score, diff) = structural_similarity(img1[:hm, :wm], img2[:hm, :wm], full=True, channel_axis=2)
     return score
 
 

@@ -126,7 +126,7 @@ def big_own_defect(image, count, hl=5, hr=15, wl=5, wr=15, p=1.0):
     return np.clip(image, 0.0, 1.0)
 
 
-def expansion_algorithm(image, count, sizel=10, sizer=50, gauss=True, p=1.0):
+def expansion_algorithm(image, count=20, sizel=10, sizer=50, gauss=True, p=1.0):
     rnd = random.Random()
     pr = rnd.uniform(0.0, 1.0)
     if pr > p:
