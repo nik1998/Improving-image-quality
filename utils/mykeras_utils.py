@@ -209,9 +209,9 @@ class AugmentationUtils:
         self.operators.append(f)
         return self
 
-    def add_light_side(self, coeff=1.5, exponential=False, p=0.5):
+    def add_light_side(self, coeff=1.5, exponential=False, dist=20, p=0.5):
         def f(image):
-            return light_side(image, coeff, exponential, p)
+            return light_side(image, coeff, exponential, dist, p)
 
         self.operators.append(f)
         return self
